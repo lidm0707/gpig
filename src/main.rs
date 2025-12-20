@@ -10,6 +10,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut rewalk = repo.revwalk()?;
     rewalk.push_head()?;
     let mut commits: Vec<CommitNode> = Vec::new();
+    // why make new vec when loop in rewalk can find_commit and process in same time.
 
     for commit_oid in rewalk {
         let commit_oid = commit_oid?;
