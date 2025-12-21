@@ -1,12 +1,15 @@
 use dark_pig_git::entities::commit::CommitNode;
-use dark_pig_git::entities::lane::Lane;
+use dark_pig_git::entities::garph::Garph;
+use dark_pig_git::entities::lane::LaneManager;
 use dotenv::dotenv;
 use git2::Oid;
+use gpui::{App, AppContext, Application, Bounds, WindowBounds, WindowOptions, px, size};
 use std::collections::HashMap;
 use std::env;
 use std::error::Error;
-const START: f32 = 10.0;
-const WIDTH: f32 = 5.0;
+const START_X: f32 = 10.0;
+const LANE_WIDTH: f32 = 80.0;
+const COMMIT_HEIGHT: f32 = 50.0;
 
 fn main() -> Result<(), Box<dyn Error>> {
     dotenv().ok();
@@ -15,72 +18,60 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut rewalk = repo.revwalk()?;
     rewalk.push_head()?;
     let mut commits: Vec<CommitNode> = Vec::new();
-    // why make new vec when loop in rewalk can find_commit and process in same time.
     let mut map_oid: HashMap<Oid, usize> = HashMap::new();
-    let mut lanes = Lane::new(vec![]);
+    let mut lane_manager = LaneManager::new();
+    // First pass: Collect all commits
     for (index, commit_oid) in rewalk.enumerate() {
         let commit_oid = commit_oid?;
         let commit = repo.find_commit(commit_oid)?;
-        let mut commit_node = CommitNode::new(
+        let parent_ids: Vec<Oid> = commit.parents().map(|parent| parent.id()).collect();
+
+        let commit_node = CommitNode::new(
             commit.id(),
             commit.message().unwrap_or_default().to_string(),
             commit.author().email().unwrap_or_default().to_string(),
             commit.time(),
-            commit.parents().map(|parent| parent.id()).collect(),
+            parent_ids.clone(),
             (0.0, 0.0),
         );
+
         map_oid.insert(commit.id(), index);
-        if index == 0 {
-            // render line && circle
-            lanes
-                .commits
-                .splice(0..0, commit.parents().map(|parent| parent.id()).map(Some));
-
-            commit_node.position = (START, WIDTH);
-            commits.push(commit_node);
-            continue;
-        }
-
-        if !lanes.commits.contains(&Some(commit.id())) {
-            // render line && circle
-            lanes.commits.push(Some(commit.id()));
-            let w = lanes
-                .commits
-                .iter()
-                .position(|&id| id == Some(commit.id()))
-                .ok_or("Failed to find commit position")?;
-            commit_node.position = (START * index as f32, WIDTH * w as f32);
-            // lane
-            commits.push(commit_node);
-            lanes.commits.iter_mut().for_each(|x| {
-                if *x == Some(commit.id()) {
-                    *x = None;
-                }
-            });
-            lanes
-                .commits
-                .splice(0..0, commit.parents().map(|parent| parent.id()).map(Some));
-            continue;
-        }
-
-        if lanes.commits.contains(&Some(commit.id())) {
-            // render line && circle
-            lanes.commits.push(Some(commit.id()));
-            let w = lanes
-                .commits
-                .iter()
-                .position(|&id| id == Some(commit.id()))
-                .ok_or("Failed to find commit position")?;
-            commit_node.position = (START * index as f32, WIDTH * w as f32);
-
-            // lane
-            commits.push(commit_node);
-            lanes.commits.push(Some(commit.id()));
-            continue;
-        }
+        commits.push(commit_node);
     }
 
-    println!("{:?}", commits[0]);
+    // Sort commits by timestamp to ensure proper chronological order
+    commits.sort_by(|a, b| b.timestamp.seconds().cmp(&a.timestamp.seconds()));
 
+    // Second pass: Assign lanes and calculate positions
+    for (index, commit_node) in commits.iter_mut().enumerate() {
+        let lane_id = lane_manager.assign_commit(commit_node.oid, &commit_node.parents);
+        let lane_position = lane_id as f32;
+
+        // Calculate position based on lane and index
+        commit_node.position = (
+            START_X + (index as f32 * COMMIT_HEIGHT),
+            LANE_WIDTH * lane_position,
+        );
+    }
+
+    println!(
+        "Processed {} commits with {} lanes",
+        commits.len(),
+        lane_manager.lanes.len()
+    );
+
+    let garph = Garph::new(commits);
+
+    Application::new().run(|cx: &mut App| {
+        let bounds = Bounds::centered(None, size(px(800.), px(600.0)), cx);
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                ..Default::default()
+            },
+            |_, cx| cx.new(|_| garph),
+        )
+        .unwrap();
+    });
     Ok(())
 }
