@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::env;
 use std::error::Error;
 const START_X: f32 = 10.0;
-const LANE_WIDTH: f32 = 20.0;
+const LANE_WIDTH: f32 = 5.0;
 const COMMIT_HEIGHT: f32 = 20.0;
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -49,7 +49,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         // Calculate position based on lane and index
         commit_node.position = (
-            START_X + (index as f32 * COMMIT_HEIGHT),
+            START_X - (index as f32 * COMMIT_HEIGHT),
             LANE_WIDTH * lane_position,
         );
     }

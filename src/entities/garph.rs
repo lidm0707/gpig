@@ -23,7 +23,7 @@ impl Garph {
             .border_color(gpui::black())
             .rounded(px(20.0))
             .size(px(10.0))
-            .top(px(node.position.0))
+            .bottom(px(node.position.0))
             .left(px(node.position.1))
     }
 }

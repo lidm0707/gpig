@@ -53,8 +53,14 @@ impl LaneManager {
                     }
                 }
             }
+            let mut count = 0;
+            for node in self.lanes.iter() {
+                if !node.is_some() {
+                    count += 1;
+                }
+            }
 
-            return self.lanes.len();
+            return count;
         }
     }
 }
