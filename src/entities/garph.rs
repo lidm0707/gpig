@@ -1,5 +1,6 @@
 use std::mem::offset_of;
 
+use chrono::DateTime;
 use gpui::{
     Context, InteractiveElement, IntoElement, ParentElement, PathBuilder, Render,
     StatefulInteractiveElement, Styled, Window, canvas, div, px,
@@ -40,14 +41,13 @@ impl Garph {
 
     pub fn create_row_with_node(&self, node: CommitNode, index: usize) -> impl IntoElement {
         // Calculate the Y position to match the node position
-        let y_pos = 800.0 - (index as f32 * 20.0); // Match the node Y position
 
         div()
             .absolute()
-            .top(px(y_pos))
-            .left(px(220.0)) // Position to the right of the graph
+            .top(px(node.position.1))
+            .left(px(1.0)) // Position to the right of the graph
             .flex_row()
-            .gap(px(10.0))
+            .gap(px(20.0))
             .children([
                 // Commit details
                 div()
@@ -57,19 +57,15 @@ impl Garph {
                     .py(px(5.0))
                     .rounded(px(4.0))
                     .child(
-                        div().gap_1().children([
-                            div()
-                                .text_color(gpui::white())
-                                .text_size(px(12.0))
-                                .child(format!(
-                                    "{}",
-                                    node.message.split('\n').next().unwrap_or_default()
-                                )),
-                            div()
-                                .text_color(gpui::rgb(0x969696))
-                                .text_size(px(10.0))
-                                .child(format!("{} - {}", node.author, node.timestamp.seconds())),
-                        ]),
+                        div().children([div()
+                            .text_color(gpui::rgb(0x969696))
+                            .text_size(px(10.0))
+                            .child(format!(
+                                "{} - {} - {}",
+                                node.author,
+                                DateTime::from_timestamp(node.timestamp.seconds(), 0).unwrap(),
+                                node.message
+                            ))]),
                     ),
             ])
     }
@@ -78,6 +74,7 @@ impl Garph {
 impl Render for Garph {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let edges = self.edge_manager.edges.clone();
+        let content_height = px(self.nodes.len() as f32 * 24.0);
 
         // Create a container that will handle scrolling for everything
         div()
@@ -86,20 +83,19 @@ impl Render for Garph {
             .id("dag")
             .overflow_scroll()
             .relative()
-            .children([
-                // Container that's larger than viewport to allow scrolling
-                div().relative().w(px(2000.0)).h(px(2000.0)).children([
-                    // Canvas for edges (same size as container)
-                    div()
-                        .relative()
-                        .top(px(0.))
-                        .left(px(0.))
-                        .size_full()
-                        .child(canvas(
+            .child(
+                div()
+                    .relative()
+                    .w_full()
+                    .h(content_height)
+                    .child(
+                        // canvas สำหรับ edge
+                        canvas(
                             move |_, _, _| {},
                             move |bounds, _, window, _| {
+                                let offset = bounds.origin;
+
                                 for edge in &edges {
-                                    let offset = bounds.origin;
                                     let mut path = PathBuilder::stroke(px(1.5));
                                     path.move_to(edge.from + offset);
                                     path.line_to(edge.to + offset);
@@ -109,27 +105,27 @@ impl Render for Garph {
                                     }
                                 }
                             },
-                        )),
-                    // Nodes positioned absolutely within the container
-                    div()
+                        )
                         .absolute()
-                        .top(px(0.))
-                        .left(px(0.))
-                        .size_full()
-                        .children(self.nodes.iter().map(|node| self.create_node(node.clone()))),
-                    // Commit details in rows
-                    div()
-                        .absolute()
-                        .top(px(0.))
-                        .left(px(220.0))
-                        .size_full()
-                        .children(
+                        .size_full(),
+                    )
+                    .child(
+                        // nodes
+                        div()
+                            .absolute()
+                            .top(px(0.))
+                            .left(px(0.))
+                            .children(self.nodes.iter().map(|n| self.create_node(n.clone()))),
+                    )
+                    .child(
+                        // rows
+                        div().absolute().top(px(0.)).left(px(100.)).children(
                             self.nodes
                                 .iter()
                                 .enumerate()
-                                .map(|(i, node)| self.create_row_with_node(node.clone(), i)),
+                                .map(|(i, n)| self.create_row_with_node(n.clone(), i)),
                         ),
-                ]),
-            ])
+                    ),
+            )
     }
 }

@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::env;
 use std::error::Error;
 const START_X: f32 = 30.0;
-const LANE_WIDTH: f32 = 10.0;
+const LANE_WIDTH: f32 = 15.0;
 const COMMIT_HEIGHT: f32 = 20.0;
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -62,7 +62,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Third pass: Create edges between commits
     for commit_node in &commits {
         let from = gpui::Point::new(
-            px(commit_node.position.0) + 6.5.into(),
+            px(commit_node.position.0) + 5.0.into(), // 5.0 = 10/2 size of node
             px(commit_node.position.1),
         );
 
@@ -71,7 +71,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let parent = &commits[*parent_index];
 
                 let to =
-                    gpui::Point::new(px(parent.position.0) + 6.5.into(), px(parent.position.1));
+                    gpui::Point::new(px(parent.position.0) + 5.0.into(), px(parent.position.1)); // 5.0 = 10/2 size of node
 
                 edge_manager.add(from, to);
             }
@@ -79,25 +79,25 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     println!(
-        "Processed {} commits with {} lanes and {} edges {:?}",
+        "Processed {} commits with {} lanes and {} at {:?}",
         commits.len(),
         lane_manager.lanes.len(),
         edge_manager.edges.len(),
-        edge_manager.edges
+        // edge_manager.edges,
+        commits[commits.len() - 1]
     );
 
     let garph = Garph::new(commits, edge_manager);
 
     Application::new().run(|cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(1800.), px(800.0)), cx);
+        // let bounds = Bounds::centered(None, size(px(1800.), px(800.0)), cx);
 
         cx.open_window(
             WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                // window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
             |_, cx| cx.new(|_| garph),
-            //            |_, cx| cx.new(|_| edge_manager),
         )
         .unwrap();
     });

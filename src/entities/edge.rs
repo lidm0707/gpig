@@ -6,6 +6,8 @@ use gpui::{
     canvas, div, px,
 };
 
+use crate::entities::bezier::create_bezier_edge;
+
 #[derive(Debug, Clone)]
 pub struct Edge {
     pub from: Point<Pixels>,
@@ -41,12 +43,8 @@ impl Render for EdgeManager {
 
         let mut lines = Vec::new();
         for edge in &self.edges {
-            let mut builder = PathBuilder::stroke(px(1.5));
+            let line = create_bezier_edge(edge.from, edge.to, 3.0);
 
-            builder.move_to(edge.from);
-            builder.line_to(edge.to);
-
-            let line = builder.build().unwrap();
             lines.push(line);
         }
         div().size_full().child(
