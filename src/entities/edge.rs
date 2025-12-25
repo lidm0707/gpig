@@ -7,24 +7,26 @@ pub struct Edge {
 }
 
 impl Edge {
-    pub fn new(x: Pixels, y: Pixels) -> Self {
-        Self {
-            from: Point::new(x, y),
-            to: Point::new(0.0.into(), 0.0.into()),
-        }
+    pub fn new(from: Point<Pixels>, to: Point<Pixels>) -> Self {
+        Self { from, to }
     }
 }
-#[derive(Debug, Clone, Default)]
+
+#[derive(Debug, Default)]
 pub struct EdgeManager {
-    pub edges: Vec<Edge>,
+    edges: Vec<Edge>,
 }
 
 impl EdgeManager {
     pub fn new() -> Self {
-        Self { edges: Vec::new() }
+        Self::default()
     }
 
     pub fn add(&mut self, from: Point<Pixels>, to: Point<Pixels>) {
-        self.edges.push(Edge { from, to });
+        self.edges.push(Edge::new(from, to));
+    }
+
+    pub fn take_edges(&mut self) -> Vec<Edge> {
+        std::mem::take(&mut self.edges)
     }
 }

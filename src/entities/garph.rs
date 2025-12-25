@@ -1,102 +1,160 @@
+use std::collections::HashMap;
+
 use chrono::DateTime;
+use git2::{Oid, Repository};
 use gpui::{
-    Context, InteractiveElement, IntoElement, ParentElement, PathBuilder, Point, Render,
+    Context, InteractiveElement, IntoElement, ParentElement, PathBuilder, Pixels, Point, Render,
     StatefulInteractiveElement, Styled, Window, canvas, div, px,
 };
 
 use crate::entities::commit::CommitNode;
-use crate::entities::edge::EdgeManager;
+use crate::entities::edge::{Edge, EdgeManager};
+use crate::entities::lane::LaneManager;
 
-#[derive(Debug, Clone)]
+const START_X: f32 = 30.0;
+const LANE_WIDTH: f32 = 15.0;
+const COMMIT_HEIGHT: f32 = 20.0;
+const SIZE: Pixels = px(10.0);
+const GAP_ROW: f32 = 40.0;
+
 pub struct Garph {
-    pub nodes: Vec<CommitNode>,
-    pub edge_manager: EdgeManager,
+    repo: Repository,
+    nodes: Vec<CommitNode>,
+    edges: Vec<Edge>,
+    content_height: Pixels,
 }
 
 impl Garph {
-    pub fn new(nodes: Vec<CommitNode>, edge_manager: EdgeManager) -> Self {
-        Garph {
-            nodes,
-            edge_manager,
+    pub fn new(repo: Repository) -> Self {
+        Self {
+            repo,
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            content_height: px(0.0),
         }
     }
 
-    pub fn create_node(&self, node: CommitNode) -> impl IntoElement {
-        // Adjust positioning to match edge coordinates
-        let x = node.position.x; // X position (from START_X minus commit height)
-        let y = node.position.y; // Y position (based on lane)
+    /* ---------------- compute graph (loop เดียว) ---------------- */
 
+    fn recompute(&mut self) {
+        self.nodes.clear();
+        self.edges.clear();
+
+        let mut revwalk = self.repo.revwalk().unwrap();
+        revwalk
+            .set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)
+            .unwrap();
+        revwalk.push_head().unwrap();
+
+        let mut lane_manager = LaneManager::new();
+        let mut edge_manager = EdgeManager::new();
+        let mut map_oid: HashMap<Oid, Vec<Point<Pixels>>> = HashMap::new();
+
+        for (index, oid) in revwalk.enumerate() {
+            let oid = oid.unwrap();
+            let commit = self.repo.find_commit(oid).unwrap();
+
+            let parents: Vec<Oid> = commit.parents().map(|p| p.id()).collect();
+            let lane = lane_manager.assign_commit(&oid, &parents) as f32;
+
+            let pos = Point::new(
+                (START_X + lane * LANE_WIDTH).into(),
+                (COMMIT_HEIGHT * index as f32).into(),
+            );
+
+            let edge_anchor = Point::new(pos.x + SIZE / 2.0, pos.y);
+
+            // connect edges
+            if let Some(froms) = map_oid.get(&oid) {
+                for from in froms {
+                    edge_manager.add(from.clone(), edge_anchor);
+                }
+            }
+
+            for parent in &parents {
+                map_oid.entry(*parent).or_default().push(edge_anchor);
+            }
+
+            self.nodes.push(CommitNode::new(
+                oid,
+                commit.message().unwrap_or_default().to_string(),
+                commit.author().email().unwrap_or_default().to_string(),
+                commit.time(),
+                parents,
+                pos,
+            ));
+        }
+
+        self.edges = edge_manager.take_edges();
+        self.content_height = px(self.nodes.len() as f32 * COMMIT_HEIGHT + GAP_ROW);
+    }
+
+    /* ---------------- view helpers ---------------- */
+
+    fn node_view(&self, node: &CommitNode) -> impl IntoElement {
         div()
             .absolute()
-            .left(x) // Scale lane position for better visibility
-            .top(y) // Adjusted Y position (inverted for proper display)
-            .w(px(10.0))
-            .h(px(10.0))
+            .left(node.position.x)
+            .top(node.position.y)
+            .size(SIZE)
             .bg(gpui::green())
             .border_color(gpui::black())
             .rounded(px(5.0))
     }
 
-    pub fn create_row_with_node(&self, node: CommitNode) -> impl IntoElement {
-        // Calculate the Y position to match the node position
-
+    fn row_view(&self, node: &CommitNode) -> impl IntoElement {
         div()
+            .size(SIZE)
             .absolute()
             .top(node.position.y)
-            .left(px(1.0)) // Position to the right of the graph
-            .flex_row()
-            .gap(px(20.0))
-            .children([
-                // Commit details
-                div()
-                    .bg(gpui::rgb(0x383838))
-                    .min_w(px(600.0))
-                    .px(px(10.0))
-                    .py(px(5.0))
-                    .rounded(px(4.0))
-                    .child(
-                        div().children([div()
-                            .text_color(gpui::rgb(0x969696))
-                            .text_size(px(10.0))
-                            .child(format!(
-                                "{} - {} - {}",
-                                node.author,
-                                DateTime::from_timestamp(node.timestamp.seconds(), 0).unwrap(),
-                                node.message
-                            ))]),
-                    ),
-            ])
+            .left(px(100.0))
+            .bg(gpui::rgb(0x383838))
+            .min_w(px(600.0))
+            .px(px(10.0))
+            .py(px(5.0))
+            .rounded(px(4.0))
+            .h(px(COMMIT_HEIGHT))
+            .text_color(gpui::rgb(0x969696))
+            .text_size(px(10.0))
+            .child(format!(
+                "{} — {} — {}",
+                node.author,
+                DateTime::from_timestamp(node.timestamp.seconds(), 0).unwrap(),
+                node.message
+            ))
     }
 }
 
 impl Render for Garph {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let edges = self.edge_manager.edges.clone();
-        let content_height = px(self.nodes.len() as f32 * 24.0);
+    fn render(&mut self, _w: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        self.recompute();
 
-        // Create a container that will handle scrolling for everything
+        let nodes = self.nodes.clone();
+        let edges = self.edges.clone();
+        let height = self.content_height;
+
         div()
             .size_full()
-            .bg(gpui::rgb(0x282828))
-            .id("dag")
+            .id("garph")
             .overflow_scroll()
+            .bg(gpui::rgb(0x282828))
             .relative()
             .child(
                 div()
                     .relative()
                     .w_full()
-                    .h(content_height)
+                    .h(height)
+                    // edges
                     .child(
-                        // canvas สำหรับ edge
                         canvas(
                             move |_, _, _| {},
                             move |bounds, _, window, _| {
                                 let offset = bounds.origin;
-                                for edge in &edges {
+                                for e in &edges {
                                     let mut path = PathBuilder::stroke(px(1.5));
                                     let size_node = Point::new(px(0.0), px(6.0));
-                                    let start = edge.from + offset + size_node;
-                                    let end = edge.to + offset + size_node;
+                                    let start = e.from + offset + size_node;
+                                    let end = e.to + offset + size_node;
 
                                     path.move_to(start);
                                     let same_lane = (start.x - end.x).abs() < px(0.5);
@@ -124,22 +182,10 @@ impl Render for Garph {
                         .absolute()
                         .size_full(),
                     )
-                    .child(
-                        // nodes
-                        div()
-                            .absolute()
-                            .top(px(0.))
-                            .left(px(0.))
-                            .children(self.nodes.iter().map(|n| self.create_node(n.clone()))),
-                    )
-                    .child(
-                        // rows
-                        div().absolute().top(px(0.)).left(px(100.)).children(
-                            self.nodes
-                                .iter()
-                                .map(|n| self.create_row_with_node(n.clone())),
-                        ),
-                    ),
+                    // nodes
+                    .child(div().children(nodes.iter().map(|n| self.node_view(n))))
+                    // rows
+                    .child(div().children(nodes.iter().map(|n| self.row_view(n)))),
             )
     }
 }

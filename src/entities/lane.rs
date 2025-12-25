@@ -45,9 +45,7 @@ impl LaneManager {
             }
         }
 
-        // 4️⃣ ถ้ามี parent ที่อยู่ใน lane อื่น → merge
         if let (Some(parent), Some(p_lane)) = (continue_parent, parent_lane) {
-            // ลบ lane ของ parent ก่อน
             if p_lane < lane {
                 self.lanes.remove(p_lane);
                 lane -= 1; // 🔑 ปรับ lane!
@@ -56,14 +54,10 @@ impl LaneManager {
             }
 
             self.lanes[lane] = Some(parent);
-        }
-        // 5️⃣ ไม่มี parent ใน lane → ใช้ parent ตัวแรก
-        else if let Some(parent) = parent_oids.first() {
+        } else if let Some(parent) = parent_oids.first() {
             self.lanes[lane] = Some(*parent);
         }
-        // else → ไม่มี parent → lane ปิด
 
-        // 6️⃣ parent ที่เหลือ เปิด lane ใหม่ (กันซ้ำ)
         for parent in parent_oids {
             if Some(*parent) != self.lanes[lane]
                 && !self.lanes.iter().any(|s| s.as_ref() == Some(parent))
@@ -72,7 +66,6 @@ impl LaneManager {
             }
         }
 
-        // 7️⃣ cleanup lane ว่างท้าย
         while matches!(self.lanes.last(), Some(None)) {
             self.lanes.pop();
         }
