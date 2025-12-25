@@ -4,7 +4,7 @@ use dark_pig_git::entities::garph::Garph;
 use dark_pig_git::entities::lane::LaneManager;
 use dotenv::dotenv;
 use git2::Oid;
-use gpui::{App, AppContext, Application, Pixels, Point, WindowOptions, px};
+use gpui::{App, AppContext, Application, Pixels, Point, WindowOptions};
 use std::collections::HashMap;
 use std::env;
 use std::error::Error;
@@ -31,18 +31,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         let commit_oid = commit_oid?;
         let commit = repo.find_commit(commit_oid)?;
         let parent_ids: Vec<Oid> = commit.parents().map(|parent| parent.id()).collect();
-
-        let lane_id = lane_manager.assign_commit(&commit_oid, &parent_ids);
+        let lane_position = lane_manager.assign_commit(&commit_oid, &parent_ids) as f32;
         //
-        let lane_position = lane_id as f32;
         let current_position: Point<Pixels> = Point::new(
             (START_X + (lane_position * LANE_WIDTH)).into(),
             (COMMIT_HEIGHT * index as f32).into(),
         );
-        // Calculate position based on lane and index
-
-        // map_oid.insert(commit.id(), index);
-
         let current_edge = Point::new(current_position.x + 5.0.into(), current_position.y);
         if let Some(pixels) = map_oid.get(&commit_oid) {
             for px in pixels {

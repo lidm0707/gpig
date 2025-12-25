@@ -1,7 +1,4 @@
-use gpui::{
-    Context, IntoElement, ParentElement, PathBuilder, Pixels, Point, Render, Styled, Window,
-    canvas, div, px,
-};
+use gpui::{Pixels, Point};
 
 #[derive(Debug, Clone)]
 pub struct Edge {
