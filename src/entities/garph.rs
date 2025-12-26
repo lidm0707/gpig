@@ -16,6 +16,7 @@ const LANE_WIDTH: f32 = 15.0;
 const COMMIT_HEIGHT: f32 = 20.0;
 const SIZE: Pixels = px(10.0);
 const GAP_ROW: f32 = 40.0;
+const LIMIT_ROW: usize = 100;
 
 pub struct Garph {
     repo: Repository,
@@ -50,7 +51,7 @@ impl Garph {
         let mut edge_manager = EdgeManager::new();
         let mut map_oid: HashMap<Oid, Vec<Point<Pixels>>> = HashMap::new();
 
-        for (index, oid) in revwalk.enumerate() {
+        for (index, oid) in revwalk.take(LIMIT_ROW).enumerate() {
             let oid = oid.unwrap();
             let commit = self.repo.find_commit(oid).unwrap();
 
