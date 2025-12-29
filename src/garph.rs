@@ -64,12 +64,12 @@ impl Garph {
             let oid = oid.unwrap();
             let commit = self.repo.find_commit(oid).unwrap();
             let parents: Vec<Oid> = commit.parents().map(|p| p.id()).collect();
-            let lane = lane_manager.assign_commit(&oid, &parents) as f32;
+            let lane = lane_manager.assign_commit(&oid, &parents);
 
-            let color = color_manager.get_color(&(lane as usize));
+            let color = color_manager.get_color(&lane);
 
             let pos = Point::new(
-                (START_X + lane * LANE_WIDTH).into(),
+                (START_X + (lane as f32) * LANE_WIDTH).into(),
                 (COMMIT_HEIGHT * index as f32).into(),
             );
 
@@ -94,10 +94,8 @@ impl Garph {
             }
 
             for parent in &parents {
-                history_oids_manager.add_history(
-                    *parent,
-                    HistoryOid::new(current_edge_point, color as usize, lane as usize),
-                );
+                history_oids_manager
+                    .add_history(*parent, HistoryOid::new(current_edge_point, color, lane));
             }
 
             self.nodes.push(CommitNode::new(
