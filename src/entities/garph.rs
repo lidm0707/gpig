@@ -18,6 +18,13 @@ const SIZE: Pixels = px(10.0);
 const GAP_ROW: f32 = 40.0;
 const LIMIT_ROW: usize = 100;
 
+pub const GIT_RED: u32 = 0xE64D3F;
+pub const GIT_YELLOW: u32 = 0xF1C40F;
+pub const GIT_GREEN: u32 = 0x2ECC71;
+pub const GIT_BLUE: u32 = 0x3498DB;
+pub const GIT_PURPLE: u32 = 0x9B59B6;
+pub const VEC_COLORS: &[u32] = &[GIT_PURPLE, GIT_BLUE, GIT_RED, GIT_YELLOW, GIT_GREEN];
+
 pub struct Garph {
     repo: Repository,
     nodes: Vec<CommitNode>,
@@ -40,7 +47,8 @@ impl Garph {
     fn recompute(&mut self) {
         self.nodes.clear();
         self.edges.clear();
-
+        let mut count_color = 0;
+        let mut map_color_lane: HashMap<usize, usize> = HashMap::new();
         let mut revwalk = self.repo.revwalk().unwrap();
         revwalk
             .set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)
@@ -49,7 +57,7 @@ impl Garph {
 
         let mut lane_manager = LaneManager::new();
         let mut edge_manager = EdgeManager::new();
-        let mut map_oid: HashMap<Oid, Vec<Point<Pixels>>> = HashMap::new();
+        let mut map_oid: HashMap<Oid, Vec<(Point<Pixels>, usize, f32)>> = HashMap::new();
 
         for (index, oid) in revwalk.take(LIMIT_ROW).enumerate() {
             let oid = oid.unwrap();
@@ -58,6 +66,20 @@ impl Garph {
             let parents: Vec<Oid> = commit.parents().map(|p| p.id()).collect();
             let lane = lane_manager.assign_commit(&oid, &parents) as f32;
 
+            let color = match map_color_lane.get(&(lane as usize)) {
+                Some(color) => *color,
+                None => {
+                    if count_color < 5 {
+                        count_color += 1;
+                        count_color - 1
+                    } else {
+                        count_color = 0;
+                        count_color
+                    }
+                }
+            };
+
+            map_color_lane.insert(lane as usize, color);
             let pos = Point::new(
                 (START_X + lane * LANE_WIDTH).into(),
                 (COMMIT_HEIGHT * index as f32).into(),
@@ -66,14 +88,28 @@ impl Garph {
             let edge_anchor = Point::new(pos.x + SIZE / 2.0, pos.y);
 
             // connect edges
+            // wrong
             if let Some(froms) = map_oid.get(&oid) {
                 for from in froms {
-                    edge_manager.add(from.clone(), edge_anchor);
+                    if from.0.x > edge_anchor.x {
+                        edge_manager.add(from.0.clone(), edge_anchor, from.1);
+                        let lane_from = &(from.2 as usize);
+                        if lane_from > &0 {
+                            map_color_lane.remove(&(from.2 as usize));
+                        }
+                    } else if from.0.x < edge_anchor.x {
+                        edge_manager.add(edge_anchor, from.0.clone(), color);
+                    } else {
+                        edge_manager.add(from.0.clone(), edge_anchor, from.1);
+                    }
                 }
             }
 
             for parent in &parents {
-                map_oid.entry(*parent).or_default().push(edge_anchor);
+                map_oid
+                    .entry(*parent)
+                    .or_default()
+                    .push((edge_anchor, color as usize, lane));
             }
 
             self.nodes.push(CommitNode::new(
@@ -83,6 +119,7 @@ impl Garph {
                 commit.time(),
                 parents,
                 pos,
+                color,
             ));
         }
 
@@ -98,7 +135,8 @@ impl Garph {
             .left(node.position.x)
             .top(node.position.y)
             .size(SIZE)
-            .bg(gpui::green())
+            // .bg(gpui::green())
+            .bg(gpui::rgb(VEC_COLORS[node.color]))
             .border_color(gpui::black())
             .rounded(px(5.0))
     }
@@ -110,6 +148,7 @@ impl Garph {
             .top(node.position.y)
             .left(px(100.0))
             .bg(gpui::rgb(0x383838))
+            // .bg(gpui::rgb(VEC_COLORS[node.color]))
             .min_w(px(600.0))
             .px(px(10.0))
             .py(px(5.0))
@@ -175,7 +214,8 @@ impl Render for Garph {
                                         path.cubic_bezier_to(end, ctrl1, ctrl2);
                                     }
                                     if let Ok(p) = path.build() {
-                                        window.paint_path(p, gpui::white());
+                                        // window.paint_path(p, gpui::white());
+                                        window.paint_path(p, gpui::rgb(VEC_COLORS[e.color]));
                                     }
                                 }
                             },

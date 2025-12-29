@@ -8,6 +8,7 @@ pub struct CommitNode {
     pub timestamp: Time,
     pub parents: Vec<Oid>,
     pub position: Point<Pixels>,
+    pub color: usize,
 }
 
 impl CommitNode {
@@ -18,6 +19,7 @@ impl CommitNode {
         timestamp: Time,
         parents: Vec<Oid>,
         position: Point<Pixels>,
+        color: usize,
     ) -> Self {
         CommitNode {
             oid,
@@ -26,6 +28,7 @@ impl CommitNode {
             timestamp,
             parents,
             position,
+            color,
         }
     }
 }
