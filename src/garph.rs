@@ -10,6 +10,7 @@ use gpui::{
 use crate::color::ColorManager;
 use crate::commit::CommitNode;
 use crate::edge::{Edge, EdgeManager};
+use crate::history_oid::{HistoryOid, HistoryOids};
 use crate::lane::LaneManager;
 
 const START_X: f32 = 30.0;
@@ -49,7 +50,6 @@ impl Garph {
         self.nodes.clear();
         self.edges.clear();
 
-        let mut color_manager = ColorManager::new(VEC_COLORS.to_vec());
         let mut revwalk = self.repo.revwalk().unwrap();
         revwalk
             .set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)
@@ -58,7 +58,9 @@ impl Garph {
 
         let mut lane_manager = LaneManager::new();
         let mut edge_manager = EdgeManager::new();
-        let mut map_oid: HashMap<Oid, Vec<(Point<Pixels>, usize, f32)>> = HashMap::new();
+        let mut color_manager = ColorManager::new(VEC_COLORS.to_vec());
+
+        let mut history_oids_manager = HistoryOids::new();
 
         for (index, oid) in revwalk.take(LIMIT_ROW).enumerate() {
             let oid = oid.unwrap();
@@ -73,31 +75,31 @@ impl Garph {
                 (COMMIT_HEIGHT * index as f32).into(),
             );
 
-            let edge_anchor = Point::new(pos.x + SIZE / 2.0, pos.y);
+            let current_edge_point = Point::new(pos.x + SIZE / 2.0, pos.y);
 
             // connect edges
             // wrong
-            if let Some(froms) = map_oid.get(&oid) {
-                for from in froms {
-                    if from.0.x > edge_anchor.x {
-                        edge_manager.add(from.0.clone(), edge_anchor, from.1);
-                        let lane_from = &(from.2 as usize);
-                        if lane_from > &0 {
-                            color_manager.remove_lane_color(&(from.2 as usize));
+            if let Some(history_oids) = history_oids_manager.get(&oid) {
+                for history in history_oids {
+                    if history.point.x > current_edge_point.x {
+                        edge_manager.add(history.point, current_edge_point, history.color);
+
+                        if history.lane > 0 {
+                            color_manager.remove_lane_color(&history.lane);
                         }
-                    } else if from.0.x < edge_anchor.x {
-                        edge_manager.add(edge_anchor, from.0.clone(), color);
+                    } else if history.point.x < current_edge_point.x {
+                        edge_manager.add(current_edge_point, history.point, color);
                     } else {
-                        edge_manager.add(from.0.clone(), edge_anchor, from.1);
+                        edge_manager.add(history.point, current_edge_point, history.color);
                     }
                 }
             }
 
             for parent in &parents {
-                map_oid
-                    .entry(*parent)
-                    .or_default()
-                    .push((edge_anchor, color as usize, lane));
+                history_oids_manager.add_history(
+                    *parent,
+                    HistoryOid::new(current_edge_point, color as usize, lane as usize),
+                );
             }
 
             self.nodes.push(CommitNode::new(
