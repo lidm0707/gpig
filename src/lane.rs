@@ -42,13 +42,14 @@ impl LaneManager {
                 continue_parent = Some(*parent);
                 parent_lane = Some(idx);
                 break;
+                // continue;
             }
         }
 
         if let (Some(parent), Some(p_lane)) = (continue_parent, parent_lane) {
             if p_lane < lane {
                 self.lanes.remove(p_lane);
-                lane -= 1; // 🔑 ปรับ lane!
+                lane -= 1;
             } else if p_lane > lane {
                 self.lanes.remove(p_lane);
             }

@@ -7,9 +7,9 @@ use gpui::{
     StatefulInteractiveElement, Styled, Window, canvas, div, px,
 };
 
-use crate::entities::commit::CommitNode;
-use crate::entities::edge::{Edge, EdgeManager};
-use crate::entities::lane::LaneManager;
+use crate::commit::CommitNode;
+use crate::edge::{Edge, EdgeManager};
+use crate::lane::LaneManager;
 
 const START_X: f32 = 30.0;
 const LANE_WIDTH: f32 = 15.0;
@@ -62,13 +62,12 @@ impl Garph {
         for (index, oid) in revwalk.take(LIMIT_ROW).enumerate() {
             let oid = oid.unwrap();
             let commit = self.repo.find_commit(oid).unwrap();
-
             let parents: Vec<Oid> = commit.parents().map(|p| p.id()).collect();
             let lane = lane_manager.assign_commit(&oid, &parents) as f32;
 
             let color = match map_color_lane.get(&(lane as usize)) {
                 Some(color) => *color,
-                None => {
+                _ => {
                     if count_color < 5 {
                         count_color += 1;
                         count_color - 1

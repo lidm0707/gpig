@@ -1,4 +1,5 @@
-use dark_pig_git::entities::garph::Garph;
+use dark_pig_git::garph::Garph;
+
 use dotenv::dotenv;
 use gpui::{App, AppContext, Application, WindowOptions};
 use std::env;
