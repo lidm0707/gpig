@@ -164,9 +164,10 @@ impl Garph {
                     .text_size(px(10.0))
                     .line_clamp(1)
                     .child(format!(
-                        "{} — {} — {}",
-                        node.author,
-                        DateTime::from_timestamp(node.timestamp.seconds(), 0).unwrap(),
+                        "{}",
+                        // "{} — {} — {}",
+                        // node.author,
+                        // DateTime::from_timestamp(node.timestamp.seconds(), 0).unwrap(),
                         message
                     )),
             )
@@ -189,7 +190,7 @@ impl Render for Garph {
             .relative()
             .child(
                 div()
-                    .relative()
+                    .absolute()
                     .w_full()
                     .h(height)
                     // edges
