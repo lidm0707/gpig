@@ -27,9 +27,10 @@ impl LaneManager {
                 self.lanes.len() - 1
             }
         };
-
+        // first must be checked current node
         self.lanes[lane] = None;
 
+        // second must be checked empty lanes
         let mut none_lane: Vec<usize> = self
             .lanes
             .iter()
@@ -37,6 +38,7 @@ impl LaneManager {
             .filter_map(|(i, l)| if l.is_none() { Some(i) } else { None })
             .collect();
 
+        // third assign parents to lanes
         for parent in parent_oids {
             if self.lanes.contains(&Some(*parent)) {
                 continue;
@@ -48,10 +50,11 @@ impl LaneManager {
             }
         }
 
+        // clear empty lanes
         while matches!(self.lanes.last(), Some(None)) {
             self.lanes.pop();
         }
-
+        // return lane of node
         lane
     }
 }
