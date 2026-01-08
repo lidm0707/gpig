@@ -1,5 +1,6 @@
 use dark_pig_git::garph::Garph;
 
+use dark_pig_git::workspace::Workspace;
 use dotenv::dotenv;
 use gpui::{App, AppContext, Application, WindowOptions};
 use std::env;
@@ -18,7 +19,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 // window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_, cx| cx.new(|_| garph),
+            |_, cx| {
+                let garph = cx.new(|_| garph);
+                cx.new(|_| Workspace::new(Some(garph)))
+            },
         )
         .unwrap();
     });

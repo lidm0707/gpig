@@ -81,7 +81,7 @@ impl Garph {
                 self.max_lane = lane;
             }
 
-            let current_edge_point = Point::new(pos.x + SIZE / 2.0, pos.y);
+            let current_edge_point = Point::new(pos.x + SIZE / 2.0, pos.y + SIZE / 2.0);
 
             // connect edges
             if let Some(history_oids) = history_oids_manager.get(&oid) {
