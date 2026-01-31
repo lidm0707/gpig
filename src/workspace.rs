@@ -3,7 +3,7 @@ use gpui::{
     MouseButton, ParentElement, Render, Styled, Window, div, prelude::FluentBuilder, px,
 };
 
-use crate::actions::Quit;
+use crate::actions::{OpenFile, Quit};
 use crate::garph::{CommitSelected, Garph};
 use crate::menu::{DropdownEvent, MenuBar};
 use crate::title::{QuitClicked, TitleBar};
@@ -28,6 +28,7 @@ impl Workspace {
         cx.subscribe(&menu_bar, Self::on_dropdown_changed).detach();
         let title_bar = cx.new(|_| TitleBar::new("Dark Pig Git"));
         cx.subscribe(&title_bar, Self::on_quit_clicked).detach();
+
         Self {
             dock: dock_clone,
             title_bar,
@@ -60,6 +61,7 @@ impl Workspace {
         _event: &QuitClicked,
         cx: &mut Context<Self>,
     ) {
+        println!("test");
         cx.dispatch_action(&Quit);
     }
 
@@ -283,7 +285,7 @@ impl Render for Workspace {
                         .shadow_lg()
                         .on_mouse_down(
                             MouseButton::Left,
-                            _cx.listener(|_this, event, _window, cx| {
+                            _cx.listener(|_this, _event, _window, cx| {
                                 cx.stop_propagation();
                             }),
                         )
@@ -316,12 +318,15 @@ impl Render for Workspace {
                                 .hover(|style| style.bg(gpui::rgb(0x333333)))
                                 .on_mouse_down(
                                     MouseButton::Left,
-                                    _cx.listener(|this, _event, _window, cx| {
+                                    _cx.listener(|this, _event, window, cx| {
+                                        println!("Open menu item clicked!");
                                         this.menu_bar.update(cx, |menu_bar, cx| {
                                             menu_bar.close_dropdown(cx);
                                         });
-                                        cx.notify();
                                         cx.stop_propagation();
+                                        // cx.dispatch_action(&OpenFile);
+                                        // cx.dispatch_action(&OpenFile);
+                                        window.dispatch_action(Box::new(OpenFile), cx);
                                     }),
                                 ),
                         )

@@ -3,6 +3,8 @@ use gpui::{
     SharedString, Styled, Window, div, px,
 };
 
+use crate::actions::Quit;
+
 pub struct TitleBar {
     title: SharedString,
 }
@@ -82,9 +84,10 @@ impl Render for TitleBar {
                                 .bg(gpui::rgb(0xff5f57))
                                 .on_mouse_down(
                                     MouseButton::Left,
-                                    cx.listener(move |_this, _event, _window, cx| {
+                                    cx.listener(move |_this, _event, window, cx| {
                                         cx.stop_propagation();
-                                        cx.emit(QuitClicked);
+                                        // cx.emit(QuitClicked);
+                                        window.dispatch_action(Box::new(Quit), cx);
                                     }),
                                 ),
                         ),

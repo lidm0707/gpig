@@ -4,10 +4,12 @@ use gpui::{
 };
 
 #[derive(Clone)]
+pub struct ClickMenuEvent;
+
+#[derive(Clone)]
 pub struct DropdownEvent {
     pub is_open: bool,
 }
-
 pub struct MenuBar {
     is_dropdown_open: bool,
 }

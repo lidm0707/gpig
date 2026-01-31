@@ -1,4 +1,4 @@
-use dark_pig_git::lane::LaneManager;
+use gpig::lane::LaneManager;
 
 #[cfg(test)]
 mod test_lance {

@@ -1,5 +1,5 @@
 [package]
-name = "dark_pig_git"
+name = "gpig"
 version = "0.1.0"
 edition = "2024"
 
@@ -8,4 +8,6 @@ chrono = "0.4.42"
 dotenv = "0.15.0"
 git2 = "0.20.3"
 gpui = { version = "*" }
+rfd = "0.14"
+unicode-segmentation = "1.12"
 # lyon = {version = "1", features = ["extra"]}
