@@ -1,4 +1,5 @@
 use git2::{Oid, Repository};
+use gpui::prelude::FluentBuilder;
 use gpui::{
     Context, EventEmitter, InteractiveElement, IntoElement, MouseButton, ParentElement,
     PathBuilder, Pixels, Point, Render, StatefulInteractiveElement, Styled, Window, canvas, div,
@@ -10,6 +11,8 @@ use crate::commit::CommitNode;
 use crate::edge::{Edge, EdgeManager};
 use crate::history_oid::{HistoryOid, HistoryOidManager};
 use crate::lane::LaneManager;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 const START_X: f32 = 30.0;
 const LANE_WIDTH: f32 = 15.0;
@@ -34,8 +37,13 @@ pub struct CommitSelected {
     pub parents: Vec<Oid>,
 }
 
+pub struct RepoPathChanged {
+    pub path: String,
+}
+
+#[derive(Clone)]
 pub struct Garph {
-    repo: Repository,
+    repo: Rc<RefCell<Option<Repository>>>,
     nodes: Vec<CommitNode>,
     edges: Vec<Edge>,
     content_height: Pixels,
@@ -43,14 +51,20 @@ pub struct Garph {
 }
 
 impl Garph {
-    pub fn new(repo: Repository) -> Self {
+    pub fn new(repo: Option<Repository>) -> Self {
         Self {
-            repo,
+            repo: Rc::new(RefCell::new(repo)),
             nodes: Vec::new(),
             edges: Vec::new(),
             content_height: px(0.0),
             max_lane: 0,
         }
+    }
+
+    pub fn update_repo(&mut self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let repo = git2::Repository::open(path)?;
+        *self.repo.borrow_mut() = Some(repo);
+        Ok(())
     }
 
     /* ---------------- compute graph (loop เดียว) ---------------- */
@@ -60,7 +74,11 @@ impl Garph {
         self.edges.clear();
         self.max_lane = 0;
 
-        let mut revwalk = self.repo.revwalk().unwrap();
+        let repo = self.repo.borrow();
+        let Some(repo) = repo.as_ref() else {
+            return;
+        };
+        let mut revwalk = repo.revwalk().unwrap();
         revwalk
             .set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)
             .unwrap();
@@ -74,7 +92,7 @@ impl Garph {
 
         for (index, oid) in revwalk.take(LIMIT_ROW).enumerate() {
             let oid = oid.unwrap();
-            let commit = self.repo.find_commit(oid).unwrap();
+            let commit = repo.find_commit(oid).unwrap();
             let parents: Vec<Oid> = commit.parents().map(|p| p.id()).collect();
             let lane = lane_manager.assign_commit(&oid, &parents);
 
@@ -138,10 +156,13 @@ impl Garph {
 
 impl EventEmitter<CommitSelected> for Garph {}
 
+impl EventEmitter<RepoPathChanged> for Garph {}
+
 impl Render for Garph {
     fn render(&mut self, _w: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.recompute();
 
+        let has_repo = self.repo.borrow().is_some();
         let nodes = self.nodes.clone();
         let edges = self.edges.clone();
         let height = self.content_height;
@@ -155,6 +176,22 @@ impl Render for Garph {
             .id("garph")
             .overflow_scroll()
             .bg(gpui::rgb(0x282828))
+            .when(!has_repo, |div1| {
+                div1.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            div()
+                                .text_color(gpui::rgb(0x969696))
+                                .text_size(px(14.0))
+                                .child("Open a folder to view git history"),
+                        ),
+                )
+            })
             // .absolute()
             // .relative()
             .child(

@@ -21,13 +21,9 @@ pub struct Workspace {
 impl Workspace {
     pub fn new(dock: Option<Entity<Garph>>, cx: &mut Context<Self>) -> Self {
         let dock_clone = dock.clone();
-        if let Some(dock) = dock {
-            cx.subscribe(&dock, Self::on_commit_selected).detach();
-        }
+
         let menu_bar = cx.new(|_| MenuBar::new());
-        cx.subscribe(&menu_bar, Self::on_dropdown_changed).detach();
         let title_bar = cx.new(|_| TitleBar::new("Dark Pig Git"));
-        cx.subscribe(&title_bar, Self::on_quit_clicked).detach();
 
         Self {
             dock: dock_clone,
@@ -92,12 +88,23 @@ impl Workspace {
 impl EventEmitter<CommitSelected> for Workspace {}
 
 impl Render for Workspace {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(dock) = &self.dock {
+            cx.subscribe(dock, Self::on_commit_selected).detach();
+        }
+
+        cx.subscribe(&self.menu_bar, Self::on_dropdown_changed)
+            .detach();
+        cx.subscribe(&self.title_bar, Self::on_quit_clicked)
+            .detach();
+
         let dock = self.dock.clone().unwrap();
         let title_bar = self.title_bar.clone();
         let menu_bar = self.menu_bar.clone();
         let selected_commit = self.selected_commit.clone();
-
+        // let path_repo = window.use_state(cx, |_, cx| cx.new(|_| "".to_string()));
+        // let repo = git2::Repository::open(&path_repo.read(cx).read(cx)).unwrap();
+        // let garph = Garph::new(repo);
         let pane_content = if let Some(commit) = selected_commit {
             let timestamp = chrono::DateTime::from_timestamp(commit.timestamp.seconds(), 0)
                 .unwrap_or_default()
@@ -252,7 +259,7 @@ impl Render for Workspace {
             .flex_col()
             .on_mouse_down(
                 MouseButton::Left,
-                _cx.listener(|this, _event, _window, cx| {
+                cx.listener(|this, _event, _window, cx| {
                     if this.menu_bar.read(cx).is_dropdown_open() {
                         this.menu_bar.update(cx, |menu_bar, cx| {
                             menu_bar.close_dropdown(cx);
@@ -271,7 +278,7 @@ impl Render for Workspace {
                     .child(div().w(gpui::px(300.0)).h_full().child(dock))
                     .child(div().flex_1().bg(gpui::white()).child(pane_content)),
             )
-            .when(self.menu_bar.read(_cx).is_dropdown_open(), |this| {
+            .when(self.menu_bar.read(cx).is_dropdown_open(), |this| {
                 this.child(
                     div()
                         .id("file_menu_dropdown")
@@ -285,7 +292,7 @@ impl Render for Workspace {
                         .shadow_lg()
                         .on_mouse_down(
                             MouseButton::Left,
-                            _cx.listener(|_this, _event, _window, cx| {
+                            cx.listener(|_this, _event, _window, cx| {
                                 cx.stop_propagation();
                             }),
                         )
@@ -299,7 +306,7 @@ impl Render for Workspace {
                                 .hover(|style| style.bg(gpui::rgb(0x333333)))
                                 .on_mouse_down(
                                     MouseButton::Left,
-                                    _cx.listener(|this, _event, _window, cx| {
+                                    cx.listener(|this, _event, _window, cx| {
                                         this.menu_bar.update(cx, |menu_bar, cx| {
                                             menu_bar.close_dropdown(cx);
                                         });
@@ -318,7 +325,7 @@ impl Render for Workspace {
                                 .hover(|style| style.bg(gpui::rgb(0x333333)))
                                 .on_mouse_down(
                                     MouseButton::Left,
-                                    _cx.listener(|this, _event, window, cx| {
+                                    cx.listener(|this, _event, window, cx| {
                                         println!("Open menu item clicked!");
                                         this.menu_bar.update(cx, |menu_bar, cx| {
                                             menu_bar.close_dropdown(cx);
@@ -340,7 +347,7 @@ impl Render for Workspace {
                                 .hover(|style| style.bg(gpui::rgb(0x333333)))
                                 .on_mouse_down(
                                     MouseButton::Left,
-                                    _cx.listener(|this, _event, _window, cx| {
+                                    cx.listener(|this, _event, _window, cx| {
                                         this.menu_bar.update(cx, |menu_bar, cx| {
                                             menu_bar.close_dropdown(cx);
                                         });
@@ -359,7 +366,7 @@ impl Render for Workspace {
                                 .hover(|style| style.bg(gpui::rgb(0x333333)))
                                 .on_mouse_down(
                                     MouseButton::Left,
-                                    _cx.listener(|this, _event, _window, cx| {
+                                    cx.listener(|this, _event, _window, cx| {
                                         this.menu_bar.update(cx, |menu_bar, cx| {
                                             menu_bar.close_dropdown(cx);
                                         });
