@@ -1,6 +1,5 @@
 pub mod color;
 pub mod commit;
-pub mod diff;
 pub mod diff_pane;
 pub mod edge;
 pub mod garph;
