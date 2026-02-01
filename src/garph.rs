@@ -21,6 +21,7 @@ const COMMIT_HEIGHT: f32 = 20.0;
 const SIZE: Pixels = px(10.0);
 const GAP_ROW: f32 = 40.0;
 const LIMIT_ROW: usize = 100;
+const MAX_FILE_SIZE_BYTES: usize = 10 * 1024 * 1024; // 10 MB
 
 // Diff limits to prevent memory exhaustion
 const MAX_FILES_TO_SHOW: usize = 10;
@@ -98,7 +99,16 @@ impl Garph {
             diff_lines.push("".to_string());
 
             for entry in tree.iter() {
-                diff_lines.push(format!("+++ a/{}", entry.name().unwrap_or_default()));
+                let name = entry.name().unwrap_or_default();
+                if Self::is_binary_file(repo, &commit, name) {
+                    diff_lines.push(format!(
+                        "+++ a/{} (binary file, size: {})",
+                        name,
+                        Self::get_file_size(repo, &commit, name).unwrap_or(0)
+                    ));
+                } else {
+                    diff_lines.push(format!("+++ a/{}", name));
+                }
             }
 
             return Ok(diff_lines.join("\n"));
@@ -136,34 +146,79 @@ impl Garph {
                     .and_then(|p| p.to_str())
                     .unwrap_or("unknown");
 
+                // Check if file is binary or too large
+                let is_binary = Self::is_binary_file(repo, &commit, file_path);
+
                 match delta.status() {
-                    git2::Delta::Added => diff_stats.push(format!("+++ a/{}", file_path)),
-                    git2::Delta::Deleted => diff_stats.push(format!("--- a/{}", file_path)),
+                    git2::Delta::Added => {
+                        if is_binary {
+                            let size = Self::get_file_size(repo, &commit, file_path).unwrap_or(0);
+                            diff_stats
+                                .push(format!("+++ a/{} (binary file, size: {})", file_path, size));
+                        } else {
+                            diff_stats.push(format!("+++ a/{}", file_path));
+                        }
+                    }
+                    git2::Delta::Deleted => {
+                        let is_binary_old = Self::is_binary_file(repo, parent, file_path);
+                        if is_binary_old {
+                            let size = Self::get_file_size(repo, parent, file_path).unwrap_or(0);
+                            diff_stats
+                                .push(format!("--- a/{} (binary file, size: {})", file_path, size));
+                        } else {
+                            diff_stats.push(format!("--- a/{}", file_path));
+                        }
+                    }
                     git2::Delta::Modified => {
-                        diff_stats.push(format!("--- a/{}", file_path));
-                        diff_stats.push(format!("+++ b/{}", file_path));
+                        if is_binary {
+                            let size = Self::get_file_size(repo, &commit, file_path).unwrap_or(0);
+                            diff_stats.push(format!("--- a/{} (binary file)", file_path));
+                            diff_stats
+                                .push(format!("+++ b/{} (binary file, size: {})", file_path, size));
+                        } else {
+                            diff_stats.push(format!("--- a/{}", file_path));
+                            diff_stats.push(format!("+++ b/{}", file_path));
+                        }
                     }
                     git2::Delta::Renamed => {
-                        diff_stats.push(format!(
-                            "--- a/{}",
-                            delta
-                                .old_file()
-                                .path()
-                                .and_then(|p| p.to_str())
-                                .unwrap_or("unknown")
-                        ));
-                        diff_stats.push(format!("+++ b/{}", file_path));
+                        let old_path = delta
+                            .old_file()
+                            .path()
+                            .and_then(|p| p.to_str())
+                            .unwrap_or("unknown");
+                        let is_binary_old = Self::is_binary_file(repo, parent, old_path);
+                        if is_binary_old {
+                            diff_stats.push(format!("--- a/{} (binary file)", old_path));
+                        } else {
+                            diff_stats.push(format!("--- a/{}", old_path));
+                        }
+                        if is_binary {
+                            let size = Self::get_file_size(repo, &commit, file_path).unwrap_or(0);
+                            diff_stats
+                                .push(format!("+++ b/{} (binary file, size: {})", file_path, size));
+                        } else {
+                            diff_stats.push(format!("+++ b/{}", file_path));
+                        }
                     }
                     git2::Delta::Copied => {
-                        diff_stats.push(format!(
-                            "--- a/{}",
-                            delta
-                                .old_file()
-                                .path()
-                                .and_then(|p| p.to_str())
-                                .unwrap_or("unknown")
-                        ));
-                        diff_stats.push(format!("+++ b/{}", file_path));
+                        let old_path = delta
+                            .old_file()
+                            .path()
+                            .and_then(|p| p.to_str())
+                            .unwrap_or("unknown");
+                        let is_binary_old = Self::is_binary_file(repo, parent, old_path);
+                        if is_binary_old {
+                            diff_stats.push(format!("--- a/{} (binary file)", old_path));
+                        } else {
+                            diff_stats.push(format!("--- a/{}", old_path));
+                        }
+                        if is_binary {
+                            let size = Self::get_file_size(repo, &commit, file_path).unwrap_or(0);
+                            diff_stats
+                                .push(format!("+++ b/{} (binary file, size: {})", file_path, size));
+                        } else {
+                            diff_stats.push(format!("+++ b/{}", file_path));
+                        }
                     }
                     _ => {}
                 }
@@ -525,6 +580,15 @@ impl Garph {
         let commit = repo.find_commit(*commit_oid)?;
         let commit_tree = commit.tree()?;
 
+        // Check if file is binary or too large
+        if Self::is_binary_file(repo, &commit, file_path) {
+            let size = Self::get_file_size(repo, &commit, file_path).unwrap_or(0);
+            return Ok(format!(
+                "{} is a binary file\nSize: {} bytes",
+                file_path, size
+            ));
+        }
+
         let diff = match commit.parent(0) {
             Ok(parent) => {
                 // Has parent - compute diff with parent
@@ -539,6 +603,7 @@ impl Garph {
 
         let diff_lines = RefCell::new(Vec::new());
         let line_count = RefCell::new(0usize);
+        let file_found = RefCell::new(false);
 
         let target_path = file_path.to_string();
 
@@ -557,6 +622,8 @@ impl Garph {
                 if current_path != target_path {
                     return true;
                 }
+
+                *file_found.borrow_mut() = true;
 
                 match delta.status() {
                     git2::Delta::Added => diff_lines
@@ -636,6 +703,15 @@ impl Garph {
         }
 
         let result = diff_lines.into_inner();
+        let found = file_found.into_inner();
+
+        // If file was not found in diff, return informative message
+        if !found {
+            return Ok(format!(
+                "File '{}' not found in diff\nThis may be because:\n- The file path has changed\n- The file was renamed\n- The file is in a subdirectory",
+                file_path
+            ));
+        }
 
         // Add truncation message if limit was hit
         let final_result = if line_count.into_inner() >= MAX_FILE_DIFF_LINES {
@@ -745,6 +821,51 @@ impl Garph {
         } else {
             format!("{}...", message.chars().take(max_chars).collect::<String>())
         }
+    }
+
+    fn is_binary_file(repo: &git2::Repository, commit: &git2::Commit, file_path: &str) -> bool {
+        let tree = match commit.tree() {
+            Ok(t) => t,
+            Err(_) => return false,
+        };
+
+        let entry = match tree.get_path(std::path::Path::new(file_path)) {
+            Ok(e) => e,
+            Err(_) => return false,
+        };
+
+        let object = match entry.to_object(repo) {
+            Ok(o) => o,
+            Err(_) => return false,
+        };
+
+        match object.as_blob() {
+            Some(blob) => {
+                // Check file size
+                if blob.size() > MAX_FILE_SIZE_BYTES {
+                    return true;
+                }
+
+                // Check if binary by looking for null bytes
+                let content = blob.content();
+                // Check first 8000 bytes for null bytes (git's heuristic)
+                let check_bytes = std::cmp::min(content.len(), 8000);
+                content[..check_bytes].contains(&0)
+            }
+            None => false,
+        }
+    }
+
+    fn get_file_size(
+        repo: &git2::Repository,
+        commit: &git2::Commit,
+        file_path: &str,
+    ) -> Option<usize> {
+        let tree = commit.tree().ok()?;
+        let entry = tree.get_path(std::path::Path::new(file_path)).ok()?;
+        let object = entry.to_object(repo).ok()?;
+        let blob = object.as_blob()?;
+        Some(blob.size() as usize)
     }
 }
 

@@ -174,10 +174,12 @@ impl Workspace {
                 )
                 .child(
                     div()
+                        .id("changed-files-list")
                         .flex_1()
                         .bg(gpui::rgb(0x1E1E1E))
                         .flex()
                         .flex_col()
+                        .overflow_y_scroll()
                         .children(self.changed_files.iter().enumerate().map(|(index, file)| {
                             let dock_for_file_clone = dock_for_file.clone();
                             let file_path = file.path.clone();
@@ -236,6 +238,9 @@ impl Workspace {
                                         .text_color(gpui::rgb(0xCCCCCC))
                                         .text_size(px(13.0))
                                         .font_family("monospace")
+                                        .overflow_hidden()
+                                        .whitespace_nowrap()
+                                        .max_w(px(400.0))
                                         .child(file_path),
                                 )
                                 .into_any()
