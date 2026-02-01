@@ -767,13 +767,36 @@ impl Render for Garph {
                         .absolute()
                         .inset_0()
                         .flex()
+                        .flex_col()
                         .items_center()
                         .justify_center()
+                        .gap_4()
                         .child(
                             div()
                                 .text_color(gpui::rgb(0x969696))
                                 .text_size(px(14.0))
-                                .child("Open a folder to view git history"),
+                                .child("No repository loaded"),
+                        )
+                        .child(
+                            div()
+                                .px(px(20.0))
+                                .py(px(10.0))
+                                .bg(gpui::rgb(0x4A90D9))
+                                .rounded(px(6.0))
+                                .text_color(gpui::white())
+                                .text_size(px(14.0))
+                                .cursor_pointer()
+                                .hover(|style| style.bg(gpui::rgb(0x357ABD)))
+                                .child("Set Path File")
+                                .on_mouse_down(
+                                    gpui::MouseButton::Left,
+                                    cx.listener(move |_this, _event, window, cx| {
+                                        window.dispatch_action(
+                                            Box::new(crate::actions::OpenFile),
+                                            cx,
+                                        );
+                                    }),
+                                ),
                         ),
                 )
             })
