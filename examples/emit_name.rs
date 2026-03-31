@@ -257,22 +257,24 @@ impl Render for Workspace {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    Application::new().run(|cx: &mut App| {
-        cx.open_window(
-            WindowOptions {
-                ..Default::default()
-            },
-            |_window, cx| {
-                // Create player entities
-                let player1 = cx.new(|_| Player::new("".to_string()));
-                let player2 = cx.new(|_| Player::new("".to_string()));
-
-                // Create workspace with players
-                cx.new(|cx| Workspace::new(player1, player2, cx))
-            },
-        )
-        .unwrap();
+    Application::with_platform(gpui_platform::current_platform(false)).run(move |cx: &mut App| {
+        let player1 = cx.new(|_| Player::new("".to_string()));
+        let player2 = cx.new(|_| Player::new("".to_string()));
+        let cotext = cx.open_window(gpui::WindowOptions::default(), |_, cx| {
+            cx.new(|_| gpui::Empty);
+            cx.new(|cx| Workspace::new(player1, player2, cx))
+        });
+        if let Ok(window) = cotext {
+        } else {
+            panic!("Failed to open window")
+        }
     });
 
     Ok(())
 }
+// // Create player entities
+// let player1 = cx.new(|_| Player::new("".to_string()));
+// let player2 = cx.new(|_| Player::new("".to_string()));
+
+// // Create workspace with players
+// cx.new(|cx| Workspace::new(player1, player2, cx))

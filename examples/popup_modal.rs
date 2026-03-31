@@ -185,7 +185,7 @@ impl Render for Workspace {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    Application::new().run(|cx: &mut App| {
+    Application::with_platform(gpui_platform::current_platform(false)).run(|cx: &mut App| {
         cx.open_window(
             WindowOptions {
                 ..Default::default()

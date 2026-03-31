@@ -5,8 +5,8 @@ use gpui::{
     Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId,
     InteractiveElement, IntoElement, KeyBinding, LayoutId, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ShapedLine, SharedString, Style,
-    TextRun, UTF16Selection, UnderlineStyle, Window, WindowBounds, WindowOptions, actions, div,
-    fill, hsla, point, prelude::*, px, relative, rgb, rgba, size,
+    TextAlign, TextRun, UTF16Selection, UnderlineStyle, Window, WindowBounds, WindowOptions,
+    actions, div, fill, hsla, point, prelude::*, px, relative, rgb, rgba, size,
 };
 use unicode_segmentation::*;
 
@@ -541,8 +541,15 @@ impl Element for TextElement {
             window.paint_quad(selection)
         }
         let line = prepaint.line.take().unwrap();
-        line.paint(bounds.origin, window.line_height(), window, cx)
-            .unwrap();
+        line.paint(
+            bounds.origin,
+            window.line_height(),
+            TextAlign::Left,
+            None,
+            window,
+            cx,
+        )
+        .unwrap();
 
         if focus_handle.is_focused(window)
             && let Some(cursor) = prepaint.cursor.take()
@@ -831,7 +838,7 @@ impl Render for Workspace {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    Application::with_platform(gpui_platform::current_platform(false)).run(|cx: &mut App| {
         // Bind keyboard shortcuts for text input
         cx.bind_keys([
             KeyBinding::new("backspace", Backspace, None),
@@ -883,7 +890,7 @@ fn main() {
 
         window
             .update(cx, |view, window, cx| {
-                window.focus(&view.text_input.focus_handle(cx));
+                window.focus(&view.text_input.focus_handle(cx), cx);
                 cx.activate(true);
             })
             .unwrap();

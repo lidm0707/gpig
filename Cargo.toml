@@ -7,7 +7,10 @@ edition = "2024"
 chrono = "0.4.42"
 dotenv = "0.15.0"
 git2 = "0.20.3"
-gpui = { version = "*" }
+gpui = { git = "https://github.com/lidm0707/zed", package = "gpui" }
 rfd = "0.14"
 unicode-segmentation = "1.12"
 # lyon = {version = "1", features = ["extra"]}
+workspace = { git = "https://github.com/lidm0707/zed", package = "workspace" }
+gpui_platform = { git = "https://github.com/lidm0707/zed", package = "gpui_platform", features = ["wayland"] }
+anyhow = "1.0.102"
