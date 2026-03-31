@@ -11,6 +11,23 @@ gpui = { git = "https://github.com/lidm0707/zed", package = "gpui" }
 rfd = "0.14"
 unicode-segmentation = "1.12"
 # lyon = {version = "1", features = ["extra"]}
+project = { git = "https://github.com/lidm0707/zed", package = "project" }
 workspace = { git = "https://github.com/lidm0707/zed", package = "workspace" }
 gpui_platform = { git = "https://github.com/lidm0707/zed", package = "gpui_platform", features = ["wayland"] }
 anyhow = "1.0.102"
+language = { git = "https://github.com/lidm0707/zed", package = "language" }
+node_runtime = { git = "https://github.com/lidm0707/zed", package = "node_runtime" }
+editor = { git = "https://github.com/lidm0707/zed", package = "editor" }
+clock = { git = "https://github.com/lidm0707/zed", package = "clock" }
+client = { git = "https://github.com/lidm0707/zed", package = "client" }
+paths = { git = "https://github.com/lidm0707/zed", package = "paths" }
+session = { git = "https://github.com/lidm0707/zed", package = "session" }
+settings = { git = "https://github.com/lidm0707/zed", package = "settings" }
+theme = { git = "https://github.com/lidm0707/zed", package = "theme" }
+theme_settings = { git = "https://github.com/lidm0707/zed", package = "theme_settings" }
+db = { git = "https://github.com/lidm0707/zed", package = "db" }
+fs = { git = "https://github.com/lidm0707/zed", package = "fs" }
+reqwest = { git = "https://github.com/lidm0707/zed", package = "reqwest_client" }
+watch = { git = "https://github.com/lidm0707/zed", package = "watch" }
+futures = "0.3"
+uuid = { version = "1.0", features = ["v4"] }
