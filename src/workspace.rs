@@ -9,6 +9,7 @@ use crate::branch::{BranchCheckedOut, BranchPanel};
 use crate::garph::{self, ChangedFile, CommitSelected, Garph};
 use crate::menu::{DropdownEvent, MenuBar};
 use crate::path_bar::{PathBar, RepoPathSubmitted, SearchPathCleared, SearchPathSubmitted};
+use crate::repo_picker;
 use crate::status_bar::StatusBar;
 use crate::status_panel::StatusPanel;
 use crate::title::{QuitClicked, TitleBar};
@@ -759,5 +760,16 @@ impl Render for Workspace {
                         ),
                 )
             })
+            .when(
+                self.path_bar.read(cx).repo_picker().read(cx).is_open(),
+                |el| {
+                    let picker = self.path_bar.read(cx).repo_picker().clone();
+                    if let Some(dropdown) = repo_picker::render_dropdown(&picker, cx) {
+                        el.child(dropdown)
+                    } else {
+                        el
+                    }
+                },
+            )
     }
 }

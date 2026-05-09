@@ -3,7 +3,7 @@ use gpui::{
     Context, Entity, EventEmitter, IntoElement, MouseButton, ParentElement, Styled, Window, div, px,
 };
 
-use crate::repo_picker::{RepoPicker, RepoSelected};
+use crate::repo_picker::{self, RepoPicker, RepoSelected};
 use crate::text_input::{TextInput, TextInputSubmitted};
 
 #[derive(Clone, Debug)]
@@ -43,6 +43,10 @@ impl PathBar {
             search_input,
             error_msg: None,
         }
+    }
+
+    pub fn repo_picker(&self) -> &Entity<RepoPicker> {
+        &self.repo_picker
     }
 
     pub fn set_error(&mut self, msg: Option<String>) {
@@ -104,6 +108,8 @@ impl PathBar {
 
 impl Render for PathBar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.repo_picker.update(cx, |p, cx| p.poll_scan(cx));
+
         let search_text = self.search_input.read(cx).text().to_string();
         let error = self.error_msg.clone();
         let repo_picker = self.repo_picker.clone();
@@ -128,7 +134,7 @@ impl Render for PathBar {
                     .font_weight(gpui::FontWeight::BOLD)
                     .child("REPO"),
             )
-            .child(repo_picker)
+            .child(repo_picker::render_button(&repo_picker, cx))
             .child(div().w(px(1.0)).h(px(20.0)).bg(gpui::rgb(0x444444)))
             .child(
                 div()
