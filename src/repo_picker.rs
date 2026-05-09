@@ -105,8 +105,13 @@ impl Render for RepoPicker {
 
         let repos = self.repos.clone();
         let is_open = self.is_open;
+        let scanning = self.scanning;
 
-        let dropdown_height = (repos.len().min(DROPDOWN_MAX_VISIBLE) as f32) * ITEM_HEIGHT;
+        let dropdown_height = if repos.is_empty() {
+            ITEM_HEIGHT
+        } else {
+            (repos.len().min(DROPDOWN_MAX_VISIBLE) as f32) * ITEM_HEIGHT
+        };
 
         div()
             .relative()
@@ -132,7 +137,10 @@ impl Render for RepoPicker {
                     .hover(|s| s.bg(gpui::rgb(0x222244)))
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(|this, _ev, _win, cx| this.toggle(cx)),
+                        cx.listener(|this, _ev, _win, cx| {
+                            this.toggle(cx);
+                            cx.stop_propagation();
+                        }),
                     )
                     .child(
                         div()
@@ -170,6 +178,21 @@ impl Render for RepoPicker {
                                 cx.stop_propagation();
                             }),
                         )
+                        .when(repos.is_empty(), |el| {
+                            let msg = if scanning {
+                                "Scanning..."
+                            } else {
+                                "No repos found"
+                            };
+                            el.child(
+                                div()
+                                    .px(px(10.0))
+                                    .py(px(6.0))
+                                    .text_color(gpui::rgb(0x666666))
+                                    .text_size(px(11.0))
+                                    .child(msg),
+                            )
+                        })
                         .children(repos.into_iter().enumerate().map(|(i, repo)| {
                             let short = short_name(&repo).to_string();
                             let repo_clone = repo.clone();
