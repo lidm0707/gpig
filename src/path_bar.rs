@@ -1,8 +1,9 @@
 use gpui::prelude::*;
 use gpui::{
-    Context, EventEmitter, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    SharedString, Styled, Window, div, px,
+    Context, Entity, EventEmitter, IntoElement, MouseButton, ParentElement, Styled, Window, div, px,
 };
+
+use crate::text_input::{TextInput, TextInputSubmitted};
 
 #[derive(Clone, Debug)]
 pub struct RepoPathSubmitted {
@@ -18,8 +19,8 @@ pub struct SearchPathSubmitted {
 pub struct SearchPathCleared;
 
 pub struct PathBar {
-    repo_input: String,
-    search_input: String,
+    repo_input: Entity<TextInput>,
+    search_input: Entity<TextInput>,
     error_msg: Option<String>,
 }
 
@@ -27,17 +28,18 @@ impl EventEmitter<RepoPathSubmitted> for PathBar {}
 impl EventEmitter<SearchPathSubmitted> for PathBar {}
 impl EventEmitter<SearchPathCleared> for PathBar {}
 
-impl Default for PathBar {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl PathBar {
-    pub fn new() -> Self {
+    pub fn new(cx: &mut Context<Self>) -> Self {
+        let repo_input = cx.new(|cx| TextInput::new("/path/to/repo", cx));
+        let search_input = cx.new(|cx| TextInput::new("src/file.rs", cx));
+
+        cx.subscribe(&repo_input, Self::on_repo_submitted).detach();
+        cx.subscribe(&search_input, Self::on_search_submitted)
+            .detach();
+
         Self {
-            repo_input: String::new(),
-            search_input: String::new(),
+            repo_input,
+            search_input,
             error_msg: None,
         }
     }
@@ -46,16 +48,42 @@ impl PathBar {
         self.error_msg = msg;
     }
 
-    pub fn clear_search(&mut self) {
-        self.search_input.clear();
+    pub fn clear_search(&mut self, cx: &mut Context<Self>) {
+        self.search_input.update(cx, |input, cx| input.clear(cx));
     }
 
-    pub fn set_repo_input(&mut self, path: String) {
-        self.repo_input = path;
+    fn on_repo_submitted(
+        &mut self,
+        _input: Entity<TextInput>,
+        _event: &TextInputSubmitted,
+        cx: &mut Context<Self>,
+    ) {
+        let path = self.repo_input.read(cx).text().trim().to_string();
+        if path.is_empty() {
+            return;
+        }
+        self.error_msg = None;
+        cx.emit(RepoPathSubmitted { path });
+        cx.notify();
+    }
+
+    fn on_search_submitted(
+        &mut self,
+        _input: Entity<TextInput>,
+        _event: &TextInputSubmitted,
+        cx: &mut Context<Self>,
+    ) {
+        let path = self.search_input.read(cx).text().trim().to_string();
+        if path.is_empty() {
+            cx.emit(SearchPathCleared);
+            return;
+        }
+        cx.emit(SearchPathSubmitted { path });
+        cx.notify();
     }
 
     fn submit_repo(&mut self, cx: &mut Context<Self>) {
-        let path = self.repo_input.trim().to_string();
+        let path = self.repo_input.read(cx).text().trim().to_string();
         if path.is_empty() {
             return;
         }
@@ -65,7 +93,7 @@ impl PathBar {
     }
 
     fn submit_search(&mut self, cx: &mut Context<Self>) {
-        let path = self.search_input.trim().to_string();
+        let path = self.search_input.read(cx).text().trim().to_string();
         if path.is_empty() {
             cx.emit(SearchPathCleared);
             return;
@@ -75,65 +103,28 @@ impl PathBar {
     }
 
     fn emit_clear(&mut self, cx: &mut Context<Self>) {
-        self.search_input.clear();
+        self.search_input.update(cx, |input, cx| input.clear(cx));
         cx.emit(SearchPathCleared);
         cx.notify();
-    }
-
-    fn render_input(
-        &self,
-        id: &str,
-        value: &str,
-        placeholder: &str,
-        border_color: u32,
-    ) -> impl IntoElement {
-        div()
-            .id(SharedString::from(id.to_string()))
-            .flex_1()
-            .h(px(24.0))
-            .px(px(8.0))
-            .bg(gpui::rgb(0x1A1A2E))
-            .border_1()
-            .border_color(gpui::rgb(border_color))
-            .rounded(px(4.0))
-            .flex()
-            .items_center()
-            .cursor_text()
-            .child(if value.is_empty() {
-                div()
-                    .text_color(gpui::rgb(0x555555))
-                    .text_size(px(11.0))
-                    .font_family("monospace")
-                    .child(placeholder.to_string())
-                    .into_any()
-            } else {
-                div()
-                    .text_color(gpui::rgb(0xCCCCCC))
-                    .text_size(px(11.0))
-                    .font_family("monospace")
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .child(value.to_string())
-                    .into_any()
-            })
     }
 }
 
 impl Render for PathBar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let repo_val = self.repo_input.clone();
-        let search_val = self.search_input.clone();
+        let search_text = self.search_input.read(cx).text().to_string();
         let error = self.error_msg.clone();
+        let repo_input = self.repo_input.clone();
+        let search_input = self.search_input.clone();
 
         div()
             .w_full()
-            .h(px(32.0))
+            .h(px(36.0))
             .flex()
             .flex_row()
             .items_center()
             .gap_2()
             .px(px(8.0))
-            .py(px(2.0))
+            .py(px(3.0))
             .bg(gpui::rgb(0x1E1E1E))
             .border_b_1()
             .border_color(gpui::rgb(0x333333))
@@ -144,7 +135,20 @@ impl Render for PathBar {
                     .font_weight(gpui::FontWeight::BOLD)
                     .child("REPO"),
             )
-            .child(self.render_input("repo_input", &repo_val, "/path/to/repo", 0x444444))
+            .child(
+                div()
+                    .flex_1()
+                    .h(px(26.0))
+                    .px(px(6.0))
+                    .bg(gpui::rgb(0x1A1A2E))
+                    .border_1()
+                    .border_color(gpui::rgb(0x444444))
+                    .rounded(px(4.0))
+                    .overflow_hidden()
+                    .text_size(px(11.0))
+                    .font_family("monospace")
+                    .child(repo_input),
+            )
             .child(
                 div()
                     .id("btn_open_repo")
@@ -171,7 +175,20 @@ impl Render for PathBar {
                     .font_weight(gpui::FontWeight::BOLD)
                     .child("PATH"),
             )
-            .child(self.render_input("search_input", &search_val, "src/file.rs", 0x444444))
+            .child(
+                div()
+                    .flex_1()
+                    .h(px(26.0))
+                    .px(px(6.0))
+                    .bg(gpui::rgb(0x1A1A2E))
+                    .border_1()
+                    .border_color(gpui::rgb(0x444444))
+                    .rounded(px(4.0))
+                    .overflow_hidden()
+                    .text_size(px(11.0))
+                    .font_family("monospace")
+                    .child(search_input),
+            )
             .child(
                 div()
                     .id("btn_filter")
@@ -190,7 +207,7 @@ impl Render for PathBar {
                         cx.listener(|this, _ev, _win, cx| this.submit_search(cx)),
                     ),
             )
-            .when(!search_val.is_empty(), |el| {
+            .when(!search_text.is_empty(), |el| {
                 el.child(
                     div()
                         .id("btn_clear_search")

@@ -10,5 +10,6 @@ pub mod menu;
 pub mod path_bar;
 pub mod status_bar;
 pub mod status_panel;
+pub mod text_input;
 pub mod title;
 pub mod workspace;

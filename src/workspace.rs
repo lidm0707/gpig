@@ -47,7 +47,7 @@ impl Workspace {
 
         let menu_bar = cx.new(|_| MenuBar::new());
         let title_bar = cx.new(|_| TitleBar::new("Dark Pig Git"));
-        let path_bar = cx.new(|_| PathBar::new());
+        let path_bar = cx.new(PathBar::new);
 
         let branch_panel = dock.as_ref().map(|garph| {
             let repo = garph.read(cx).repo();
@@ -265,8 +265,8 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.reload_status_panels(cx);
-        self.path_bar.update(cx, |pb, _| {
-            pb.clear_search();
+        self.path_bar.update(cx, |pb, cx| {
+            pb.clear_search(cx);
         });
         cx.notify();
     }
