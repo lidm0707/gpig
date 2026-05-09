@@ -8,6 +8,8 @@ pub mod history_oid;
 pub mod lane;
 pub mod menu;
 pub mod path_bar;
+pub mod repo_picker;
+pub mod repo_scanner;
 pub mod status_bar;
 pub mod status_panel;
 pub mod text_input;

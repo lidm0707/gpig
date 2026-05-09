@@ -630,8 +630,11 @@ impl Render for Workspace {
                         this.menu_bar.update(cx, |menu_bar, cx| {
                             menu_bar.close_dropdown(cx);
                         });
-                        cx.notify();
                     }
+                    this.path_bar.update(cx, |pb, cx| {
+                        pb.close_repo_dropdown(cx);
+                    });
+                    cx.notify();
                 }),
             )
             .child(title_bar)
