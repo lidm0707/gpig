@@ -13,6 +13,7 @@ use crate::history_oid::{HistoryOid, HistoryOidManager};
 use crate::lane::LaneManager;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::mpsc::Receiver;
 
 const START_X: f32 = 30.0;
 const LANE_WIDTH: f32 = 15.0;
@@ -264,6 +265,99 @@ fn file_size(repo: &Repository, commit: &git2::Commit, file_path: &str) -> Optio
     Some(blob.size())
 }
 
+fn recompute_bg(repo_path: String) -> GraphData {
+    let Ok(repo) = Repository::open(&repo_path) else {
+        return GraphData {
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            max_lane: 0,
+            content_height: px(0.0),
+        };
+    };
+
+    let Ok(mut revwalk) = repo.revwalk() else {
+        return GraphData {
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            max_lane: 0,
+            content_height: px(0.0),
+        };
+    };
+
+    revwalk
+        .set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)
+        .ok();
+    revwalk.push_head().ok();
+
+    let mut nodes = Vec::new();
+    let mut lane_manager = LaneManager::new();
+    let mut edge_manager = EdgeManager::new();
+    let mut color_manager = ColorManager::new(VEC_COLORS.to_vec());
+    let mut history_oids_manager = HistoryOidManager::new();
+    let mut max_lane = 0;
+
+    for (index, oid) in revwalk.take(LIMIT_ROW).enumerate() {
+        let Ok(oid) = oid else { continue };
+        let Ok(commit) = repo.find_commit(oid) else {
+            continue;
+        };
+        let parents: Vec<Oid> = commit.parents().map(|p| p.id()).collect();
+        let lane = lane_manager.assign_commit(&oid, &parents);
+        let color = color_manager.get_color(&lane);
+
+        let pos = Point::new(
+            (START_X + (lane as f32) * LANE_WIDTH).into(),
+            (COMMIT_HEIGHT * index as f32).into(),
+        );
+
+        if lane > max_lane {
+            max_lane = lane;
+        }
+
+        let current_edge_point = Point::new(pos.x + SIZE / 2.0, pos.y + SIZE / 2.0);
+
+        if let Some(history_oids) = history_oids_manager.get(&oid) {
+            for history in history_oids {
+                if history.edge_point.x > current_edge_point.x {
+                    edge_manager.add(history.edge_point, current_edge_point, history.color);
+                    if history.lane > 0 {
+                        color_manager.remove_lane_color(&history.lane);
+                    }
+                } else if history.edge_point.x < current_edge_point.x {
+                    edge_manager.add(current_edge_point, history.edge_point, color);
+                } else {
+                    edge_manager.add(history.edge_point, current_edge_point, history.color);
+                }
+            }
+        }
+
+        for parent in &parents {
+            history_oids_manager
+                .add_history(*parent, HistoryOid::new(current_edge_point, color, lane));
+        }
+
+        nodes.push(CommitNode::new(
+            oid,
+            commit.message().unwrap_or_default().to_string(),
+            commit.author().email().unwrap_or_default().to_string(),
+            commit.time(),
+            parents,
+            pos,
+            color,
+        ));
+    }
+
+    let edges = edge_manager.take_edges();
+    let content_height = px(nodes.len() as f32 * COMMIT_HEIGHT + GAP_ROW);
+
+    GraphData {
+        nodes,
+        edges,
+        max_lane,
+        content_height,
+    }
+}
+
 #[derive(Clone)]
 pub struct CommitSelected {
     pub oid: Oid,
@@ -285,7 +379,28 @@ pub struct RepoPathChanged {
     pub path: String,
 }
 
-#[derive(Clone)]
+pub struct GraphData {
+    pub nodes: Vec<CommitNode>,
+    pub edges: Vec<Edge>,
+    pub max_lane: usize,
+    pub content_height: Pixels,
+}
+
+impl Clone for Garph {
+    fn clone(&self) -> Self {
+        Self {
+            repo: self.repo.clone(),
+            repo_path: self.repo_path.clone(),
+            nodes: self.nodes.clone(),
+            edges: self.edges.clone(),
+            content_height: self.content_height,
+            max_lane: self.max_lane,
+            dirty: self.dirty,
+            pending_graph_rx: None,
+        }
+    }
+}
+
 pub struct Garph {
     repo: Rc<RefCell<Option<Repository>>>,
     repo_path: Option<String>,
@@ -294,6 +409,7 @@ pub struct Garph {
     content_height: Pixels,
     max_lane: usize,
     pub dirty: bool,
+    pending_graph_rx: Option<Receiver<GraphData>>,
 }
 
 impl Garph {
@@ -306,6 +422,7 @@ impl Garph {
             content_height: px(0.0),
             max_lane: 0,
             dirty: true,
+            pending_graph_rx: None,
         }
     }
 
@@ -318,11 +435,45 @@ impl Garph {
         *self.repo.borrow_mut() = Some(repo);
         self.repo_path = Some(path.to_string());
         self.dirty = true;
+        self.spawn_recompute();
         Ok(())
+    }
+
+    pub fn mark_dirty(&mut self) {
+        self.dirty = true;
+        self.spawn_recompute();
     }
 
     pub fn repo_path(&self) -> Option<&str> {
         self.repo_path.as_deref()
+    }
+
+    fn spawn_recompute(&mut self) {
+        let Some(repo_path) = self.repo_path.clone() else {
+            return;
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.pending_graph_rx = Some(rx);
+        self.nodes.clear();
+        self.edges.clear();
+
+        std::thread::spawn(move || {
+            let data = recompute_bg(repo_path);
+            let _ = tx.send(data);
+        });
+    }
+
+    fn poll_graph(&mut self) {
+        if let Some(rx) = &self.pending_graph_rx
+            && let Ok(data) = rx.try_recv()
+        {
+            self.nodes = data.nodes;
+            self.edges = data.edges;
+            self.max_lane = data.max_lane;
+            self.content_height = data.content_height;
+            self.dirty = false;
+            self.pending_graph_rx = None;
+        }
     }
 
     pub fn compute_commit_diff(
@@ -911,86 +1062,6 @@ impl Garph {
         Ok(final_result.join("\n"))
     }
 
-    /* ---------------- compute graph (loop เดียว) ---------------- */
-
-    fn recompute(&mut self) {
-        self.nodes.clear();
-        self.edges.clear();
-        self.max_lane = 0;
-
-        let repo = self.repo.borrow();
-        let Some(repo) = repo.as_ref() else {
-            return;
-        };
-        let mut revwalk = repo.revwalk().unwrap();
-        revwalk
-            .set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)
-            .unwrap();
-        revwalk.push_head().unwrap();
-
-        let mut lane_manager = LaneManager::new();
-        let mut edge_manager = EdgeManager::new();
-        let mut color_manager = ColorManager::new(VEC_COLORS.to_vec());
-
-        let mut history_oids_manager = HistoryOidManager::new();
-
-        for (index, oid) in revwalk.take(LIMIT_ROW).enumerate() {
-            let oid = oid.unwrap();
-            let commit = repo.find_commit(oid).unwrap();
-            let parents: Vec<Oid> = commit.parents().map(|p| p.id()).collect();
-            let lane = lane_manager.assign_commit(&oid, &parents);
-
-            let color = color_manager.get_color(&lane);
-
-            let pos = Point::new(
-                (START_X + (lane as f32) * LANE_WIDTH).into(),
-                (COMMIT_HEIGHT * index as f32).into(),
-            );
-
-            // Track maximum lane
-            if lane > self.max_lane {
-                self.max_lane = lane;
-            }
-
-            let current_edge_point = Point::new(pos.x + SIZE / 2.0, pos.y + SIZE / 2.0);
-
-            // connect edges
-            if let Some(history_oids) = history_oids_manager.get(&oid) {
-                for history in history_oids {
-                    if history.edge_point.x > current_edge_point.x {
-                        edge_manager.add(history.edge_point, current_edge_point, history.color);
-
-                        if history.lane > 0 {
-                            color_manager.remove_lane_color(&history.lane);
-                        }
-                    } else if history.edge_point.x < current_edge_point.x {
-                        edge_manager.add(current_edge_point, history.edge_point, color);
-                    } else {
-                        edge_manager.add(history.edge_point, current_edge_point, history.color);
-                    }
-                }
-            }
-
-            for parent in &parents {
-                history_oids_manager
-                    .add_history(*parent, HistoryOid::new(current_edge_point, color, lane));
-            }
-
-            self.nodes.push(CommitNode::new(
-                oid,
-                commit.message().unwrap_or_default().to_string(),
-                commit.author().email().unwrap_or_default().to_string(),
-                commit.time(),
-                parents,
-                pos,
-                color,
-            ));
-        }
-
-        self.edges = edge_manager.take_edges();
-        self.content_height = px(self.nodes.len() as f32 * COMMIT_HEIGHT + GAP_ROW);
-    }
-
     /* ---------------- view helpers ---------------- */
 
     fn clean_message(message: &str) -> String {
@@ -1057,9 +1128,8 @@ impl EventEmitter<RepoPathChanged> for Garph {}
 
 impl Render for Garph {
     fn render(&mut self, _w: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.dirty {
-            self.recompute();
-            self.dirty = false;
+        self.poll_graph();
+        if self.pending_graph_rx.is_some() {
             cx.notify();
         }
 

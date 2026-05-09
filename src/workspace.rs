@@ -185,7 +185,7 @@ impl Workspace {
     ) {
         if let Some(dock) = &self.dock {
             dock.update(cx, |garph, cx| {
-                garph.dirty = true;
+                garph.mark_dirty();
                 cx.notify();
             });
         }
