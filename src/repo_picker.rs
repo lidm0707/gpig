@@ -105,6 +105,14 @@ impl Render for RepoPicker {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.poll_scan(cx);
 
+        eprintln!(
+            "[repo_picker] render: repos={} scanning={} is_open={} selected={:?}",
+            self.repos.len(),
+            self.scanning,
+            self.is_open,
+            self.selected
+        );
+
         let label = match &self.selected {
             Some(p) => short_name(p).to_string(),
             None if self.scanning => "Scanning...".to_string(),
