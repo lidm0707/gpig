@@ -1,13 +1,37 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const MAX_DEPTH: usize = 4;
+const MAX_DEPTH: usize = 5;
 const GIT_DIR: &str = ".git";
 
+const SKIP_DIRS: &[&str] = &[
+    ".cargo",
+    ".cache",
+    ".config",
+    ".local",
+    ".rustup",
+    ".npm",
+    ".nvm",
+    ".vscode",
+    ".vscode-server",
+    ".mozilla",
+    ".thunderbird",
+    ".gradle",
+    ".m2",
+    ".android",
+    "node_modules",
+    "target",
+    "build",
+    "dist",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".tox",
+    ".idea",
+];
+
 fn default_scan_root() -> PathBuf {
-    let home = dirs_home();
-    let git_dir = home.join("git");
-    if git_dir.is_dir() { git_dir } else { home }
+    dirs_home()
 }
 
 fn dirs_home() -> PathBuf {
@@ -46,7 +70,7 @@ fn walk_for_git(dir: &Path, depth: usize, out: &mut Vec<String>) {
         let path = entry.path();
         if path.is_dir() {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if name.starts_with('.') || name == "node_modules" || name == "target" {
+            if name.starts_with('.') || SKIP_DIRS.contains(&name) {
                 continue;
             }
             walk_for_git(&path, depth + 1, out);
