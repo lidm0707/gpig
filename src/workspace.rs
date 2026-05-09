@@ -6,11 +6,12 @@ use gpui::{
 
 use crate::actions::{OpenFile, Quit};
 use crate::branch::{BranchCheckedOut, BranchPanel};
-use crate::garph::{ChangedFile, CommitSelected, Garph};
+use crate::garph::{self, ChangedFile, CommitSelected, Garph};
 use crate::menu::{DropdownEvent, MenuBar};
 use crate::status_bar::StatusBar;
 use crate::status_panel::StatusPanel;
 use crate::title::{QuitClicked, TitleBar};
+use std::sync::mpsc::{self, Receiver};
 
 pub struct Dock;
 pub struct Pane;
@@ -28,7 +29,8 @@ pub struct Workspace {
     active_pane: ActivePane,
     loading_diff: bool,
     current_commit_oid: Option<git2::Oid>,
-    // pane: Vec<Entity<AnyElement>>,
+    pending_files_rx: Option<Receiver<Vec<ChangedFile>>>,
+    pending_diff_rx: Option<Receiver<String>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -73,6 +75,8 @@ impl Workspace {
             active_pane: ActivePane::Content,
             loading_diff: false,
             current_commit_oid: None,
+            pending_files_rx: None,
+            pending_diff_rx: None,
         }
     }
 
@@ -96,21 +100,29 @@ impl Workspace {
         commit: &CommitSelected,
         cx: &mut Context<Self>,
     ) {
-        let files = garph.update(cx, |garph, _cx| {
-            match garph.get_changed_files(&commit.oid) {
-                Ok(files) => files,
-                Err(e) => {
-                    eprintln!("Failed to get changed files: {}", e);
-                    Vec::new()
-                }
-            }
-        });
+        let repo_path = garph.read(cx).repo_path().map(|s| s.to_string());
+        let oid = commit.oid;
 
-        self.changed_files = files;
+        self.changed_files.clear();
         self.selected_file = None;
         self.file_diff = None;
-        self.current_commit_oid = Some(commit.oid);
+        self.current_commit_oid = Some(oid);
         cx.notify();
+
+        let Some(repo_path) = repo_path else {
+            return;
+        };
+
+        let (tx, rx) = mpsc::channel();
+        self.pending_files_rx = Some(rx);
+
+        std::thread::spawn(move || {
+            let result = garph::get_changed_files_bg(repo_path, oid).unwrap_or_else(|e| {
+                eprintln!("Failed to get changed files: {}", e);
+                Vec::new()
+            });
+            let _ = tx.send(result);
+        });
     }
 
     fn on_file_selected(
@@ -119,13 +131,7 @@ impl Workspace {
         garph: Entity<Garph>,
         cx: &mut Context<Self>,
     ) {
-        // Safety check to prevent out of bounds
         if file_index >= self.changed_files.len() {
-            eprintln!(
-                "Invalid file index: {} (total files: {})",
-                file_index,
-                self.changed_files.len()
-            );
             return;
         }
 
@@ -134,8 +140,6 @@ impl Workspace {
         cx.notify();
 
         let file = self.changed_files[file_index].clone();
-
-        // Get commit OID - if none available, show error
         let commit_oid = match self.current_commit_oid {
             Some(oid) => oid,
             None => {
@@ -146,16 +150,24 @@ impl Workspace {
             }
         };
 
-        let diff_content = garph.update(cx, |garph, _cx| {
-            match garph.compute_file_diff(&commit_oid, &file.path) {
-                Ok(diff) => diff,
-                Err(e) => format!("Failed to compute diff: {}", e),
+        let repo_path = match garph.read(cx).repo_path().map(|s| s.to_string()) {
+            Some(p) => p,
+            None => {
+                self.file_diff = Some("No repo".to_string());
+                self.loading_diff = false;
+                cx.notify();
+                return;
             }
-        });
+        };
 
-        self.file_diff = Some(diff_content);
-        self.loading_diff = false;
-        cx.notify();
+        let (tx, rx) = mpsc::channel();
+        self.pending_diff_rx = Some(rx);
+
+        std::thread::spawn(move || {
+            let result = garph::compute_file_diff_bg(repo_path, commit_oid, file.path.clone())
+                .unwrap_or_else(|e| format!("Failed to compute diff: {}", e));
+            let _ = tx.send(result);
+        });
     }
 
     fn on_back_to_file_list(&mut self, cx: &mut Context<Self>) {
@@ -445,6 +457,24 @@ impl Workspace {
         }
     }
 
+    fn poll_pending_results(&mut self, cx: &mut Context<Self>) {
+        if let Some(rx) = &self.pending_files_rx
+            && let Ok(files) = rx.try_recv()
+        {
+            self.changed_files = files;
+            self.pending_files_rx = None;
+            cx.notify();
+        }
+        if let Some(rx) = &self.pending_diff_rx
+            && let Ok(diff) = rx.try_recv()
+        {
+            self.file_diff = Some(diff);
+            self.loading_diff = false;
+            self.pending_diff_rx = None;
+            cx.notify();
+        }
+    }
+
     fn on_dropdown_changed(
         &mut self,
         _menu_bar: Entity<MenuBar>,
@@ -492,6 +522,8 @@ impl EventEmitter<CommitSelected> for Workspace {}
 
 impl Render for Workspace {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.poll_pending_results(cx);
+
         if let Some(dock) = &self.dock {
             cx.subscribe(dock, Self::on_commit_selected).detach();
         }

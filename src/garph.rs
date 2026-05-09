@@ -35,6 +35,235 @@ pub const GIT_BLUE: u32 = 0x3498DB;
 pub const GIT_PURPLE: u32 = 0x9B59B6;
 pub const VEC_COLORS: &[u32] = &[GIT_PURPLE, GIT_BLUE, GIT_RED, GIT_YELLOW, GIT_GREEN];
 
+const BINARY_CHECK_BYTES: usize = 8000;
+
+pub fn compute_file_diff_bg(
+    repo_path: String,
+    commit_oid: Oid,
+    file_path: String,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    const MAX_FILE_DIFF_LINES: usize = 200;
+
+    let repo = Repository::open(&repo_path)?;
+    let commit = repo.find_commit(commit_oid)?;
+    let commit_tree = commit.tree()?;
+
+    if is_binary_check(&repo, &commit, &file_path) {
+        let size = file_size(&repo, &commit, &file_path).unwrap_or(0);
+        return Ok(format!(
+            "{} is a binary file\nSize: {} bytes",
+            file_path, size
+        ));
+    }
+
+    let diff = match commit.parent(0) {
+        Ok(parent) => {
+            let parent_tree = parent.tree()?;
+            repo.diff_tree_to_tree(Some(&parent_tree), Some(&commit_tree), None)?
+        }
+        Err(_) => repo.diff_tree_to_tree(None, Some(&commit_tree), None)?,
+    };
+
+    let diff_lines = RefCell::new(Vec::new());
+    let line_count = RefCell::new(0usize);
+    let file_found = RefCell::new(false);
+
+    diff.foreach(
+        &mut |delta, _| {
+            let current_path = delta
+                .new_file()
+                .path()
+                .or(delta.old_file().path())
+                .and_then(|p| p.to_str())
+                .unwrap_or("");
+
+            if current_path != file_path {
+                return true;
+            }
+
+            *file_found.borrow_mut() = true;
+
+            match delta.status() {
+                git2::Delta::Added => diff_lines
+                    .borrow_mut()
+                    .push(format!("+++ a/{}", current_path)),
+                git2::Delta::Deleted => diff_lines
+                    .borrow_mut()
+                    .push(format!("--- a/{}", current_path)),
+                git2::Delta::Modified => {
+                    diff_lines
+                        .borrow_mut()
+                        .push(format!("--- a/{}", current_path));
+                    diff_lines
+                        .borrow_mut()
+                        .push(format!("+++ b/{}", current_path));
+                }
+                git2::Delta::Renamed => {
+                    let old_path = delta
+                        .old_file()
+                        .path()
+                        .and_then(|p| p.to_str())
+                        .unwrap_or("");
+                    diff_lines.borrow_mut().push(format!("--- a/{}", old_path));
+                    diff_lines
+                        .borrow_mut()
+                        .push(format!("+++ b/{}", current_path));
+                }
+                _ => {}
+            }
+            true
+        },
+        None,
+        Some(&mut |_: git2::DiffDelta, hunk: git2::DiffHunk| {
+            if *line_count.borrow() >= MAX_FILE_DIFF_LINES {
+                return false;
+            }
+            diff_lines
+                .borrow_mut()
+                .push(format!("@@ {} @@", String::from_utf8_lossy(hunk.header())));
+            true
+        }),
+        Some(
+            &mut |_: git2::DiffDelta, _: Option<git2::DiffHunk>, line: git2::DiffLine| {
+                let mut lc = line_count.borrow_mut();
+                if *lc >= MAX_FILE_DIFF_LINES {
+                    return false;
+                }
+                let content = String::from_utf8_lossy(line.content());
+                let prefix = match line.origin() {
+                    '+' => "+",
+                    '-' => "-",
+                    ' ' => " ",
+                    _ => " ",
+                };
+                diff_lines
+                    .borrow_mut()
+                    .push(format!("{}{}", prefix, content.trim_end()));
+                *lc += 1;
+                true
+            },
+        ),
+    )?;
+
+    let result = diff_lines.into_inner();
+    let found = file_found.into_inner();
+
+    if !found {
+        return Ok(format!("File '{}' not found in diff", file_path));
+    }
+
+    let final_result = if line_count.into_inner() >= MAX_FILE_DIFF_LINES {
+        let mut truncated = result;
+        truncated.push(String::new());
+        truncated.push(format!(
+            "... (showing first {} lines, diff truncated)",
+            MAX_FILE_DIFF_LINES
+        ));
+        truncated
+    } else {
+        result
+    };
+
+    Ok(final_result.join("\n"))
+}
+
+pub fn get_changed_files_bg(
+    repo_path: String,
+    oid: Oid,
+) -> Result<Vec<ChangedFile>, Box<dyn std::error::Error + Send + Sync>> {
+    let repo = Repository::open(&repo_path)?;
+    let commit = repo.find_commit(oid)?;
+    let parents: Vec<git2::Commit> = commit.parents().collect();
+    let mut files = Vec::new();
+
+    if parents.is_empty() {
+        let tree = commit.tree()?;
+        for entry in tree.iter() {
+            if let Some(name) = entry.name() {
+                files.push(ChangedFile {
+                    path: name.to_string(),
+                    status: git2::Delta::Added,
+                    old_oid: None,
+                    new_oid: Some(oid),
+                });
+            }
+        }
+        return Ok(files);
+    }
+
+    let parent_tree = parents[0].tree()?;
+    let commit_tree = commit.tree()?;
+    let diff = repo.diff_tree_to_tree(Some(&parent_tree), Some(&commit_tree), None)?;
+
+    diff.foreach(
+        &mut |delta, _| {
+            let path = delta
+                .new_file()
+                .path()
+                .or(delta.old_file().path())
+                .and_then(|p| p.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+
+            let old_oid = {
+                let id = delta.old_file().id();
+                if id.is_zero() { None } else { Some(id) }
+            };
+            let new_oid = {
+                let id = delta.new_file().id();
+                if id.is_zero() { None } else { Some(id) }
+            };
+
+            files.push(ChangedFile {
+                path,
+                status: delta.status(),
+                old_oid,
+                new_oid,
+            });
+            true
+        },
+        None,
+        None,
+        None,
+    )?;
+
+    Ok(files)
+}
+
+fn is_binary_check(repo: &Repository, commit: &git2::Commit, file_path: &str) -> bool {
+    let tree = match commit.tree() {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+    let entry = match tree.get_path(std::path::Path::new(file_path)) {
+        Ok(e) => e,
+        Err(_) => return false,
+    };
+    let object = match entry.to_object(repo) {
+        Ok(o) => o,
+        Err(_) => return false,
+    };
+    match object.as_blob() {
+        Some(blob) => {
+            if blob.size() > MAX_FILE_SIZE_BYTES {
+                return true;
+            }
+            let content = blob.content();
+            let check = std::cmp::min(content.len(), BINARY_CHECK_BYTES);
+            content[..check].contains(&0)
+        }
+        None => false,
+    }
+}
+
+fn file_size(repo: &Repository, commit: &git2::Commit, file_path: &str) -> Option<usize> {
+    let tree = commit.tree().ok()?;
+    let entry = tree.get_path(std::path::Path::new(file_path)).ok()?;
+    let object = entry.to_object(repo).ok()?;
+    let blob = object.as_blob()?;
+    Some(blob.size())
+}
+
 #[derive(Clone)]
 pub struct CommitSelected {
     pub oid: Oid,
@@ -59,6 +288,7 @@ pub struct RepoPathChanged {
 #[derive(Clone)]
 pub struct Garph {
     repo: Rc<RefCell<Option<Repository>>>,
+    repo_path: Option<String>,
     nodes: Vec<CommitNode>,
     edges: Vec<Edge>,
     content_height: Pixels,
@@ -70,6 +300,7 @@ impl Garph {
     pub fn new(repo: Option<Repository>) -> Self {
         Self {
             repo: Rc::new(RefCell::new(repo)),
+            repo_path: None,
             nodes: Vec::new(),
             edges: Vec::new(),
             content_height: px(0.0),
@@ -85,8 +316,13 @@ impl Garph {
     pub fn update_repo(&mut self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
         let repo = git2::Repository::open(path)?;
         *self.repo.borrow_mut() = Some(repo);
+        self.repo_path = Some(path.to_string());
         self.dirty = true;
         Ok(())
+    }
+
+    pub fn repo_path(&self) -> Option<&str> {
+        self.repo_path.as_deref()
     }
 
     pub fn compute_commit_diff(
