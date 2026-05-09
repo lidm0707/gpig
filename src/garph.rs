@@ -63,7 +63,7 @@ pub struct Garph {
     edges: Vec<Edge>,
     content_height: Pixels,
     max_lane: usize,
-    dirty: bool,
+    pub dirty: bool,
 }
 
 impl Garph {
@@ -76,6 +76,10 @@ impl Garph {
             max_lane: 0,
             dirty: true,
         }
+    }
+
+    pub fn repo(&self) -> Rc<RefCell<Option<Repository>>> {
+        self.repo.clone()
     }
 
     pub fn update_repo(&mut self, path: &str) -> Result<(), Box<dyn std::error::Error>> {

@@ -219,10 +219,10 @@ main.rs
 
 ```
 01  clean up garph.rs (remove eprintln, fix recompute)          ✅ DONE
-02  create branch.rs — list + checkout
-03  create status_panel.rs — working dir status
-04  create status_bar.rs — repo info bar
-05  wire branch + status into workspace.rs layout
+02  create branch.rs — list + checkout                          ✅ DONE
+03  create status_panel.rs — working dir status                 ✅ DONE
+04  create status_bar.rs — repo info bar                        ✅ DONE
+05  wire branch + status into workspace.rs layout               ✅ DONE
 06  create diff_highlight.rs — colored diff lines
 07  create staging.rs — stage & commit
 08  extend branch.rs — create / delete

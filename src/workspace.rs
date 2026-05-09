@@ -5,8 +5,11 @@ use gpui::{
 };
 
 use crate::actions::{OpenFile, Quit};
+use crate::branch::{BranchCheckedOut, BranchPanel};
 use crate::garph::{ChangedFile, CommitSelected, Garph};
 use crate::menu::{DropdownEvent, MenuBar};
+use crate::status_bar::StatusBar;
+use crate::status_panel::StatusPanel;
 use crate::title::{QuitClicked, TitleBar};
 
 pub struct Dock;
@@ -15,6 +18,9 @@ pub struct Workspace {
     dock: Option<Entity<Garph>>,
     title_bar: Entity<TitleBar>,
     menu_bar: Entity<MenuBar>,
+    branch_panel: Option<Entity<BranchPanel>>,
+    status_panel: Option<Entity<StatusPanel>>,
+    status_bar: Option<Entity<StatusBar>>,
     selected_commit: Option<CommitSelected>,
     changed_files: Vec<ChangedFile>,
     selected_file: Option<usize>,
@@ -38,10 +44,28 @@ impl Workspace {
         let menu_bar = cx.new(|_| MenuBar::new());
         let title_bar = cx.new(|_| TitleBar::new("Dark Pig Git"));
 
+        let branch_panel = dock.as_ref().map(|garph| {
+            let repo = garph.read(cx).repo();
+            cx.new(|_| BranchPanel::new(repo.clone()))
+        });
+
+        let status_panel = dock.as_ref().map(|garph| {
+            let repo = garph.read(cx).repo();
+            cx.new(|_| StatusPanel::new(repo.clone()))
+        });
+
+        let status_bar = dock.as_ref().map(|garph| {
+            let repo = garph.read(cx).repo();
+            cx.new(|_| StatusBar::new(repo))
+        });
+
         Self {
             dock: dock_clone,
             title_bar,
             menu_bar,
+            branch_panel,
+            status_panel,
+            status_bar,
             selected_commit: None,
             changed_files: Vec::new(),
             selected_file: None,
@@ -139,6 +163,32 @@ impl Workspace {
         self.file_diff = None;
         self.loading_diff = false;
         cx.notify();
+    }
+
+    fn on_branch_checked_out(
+        &mut self,
+        _branch_panel: Entity<BranchPanel>,
+        _event: &BranchCheckedOut,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(dock) = &self.dock {
+            dock.update(cx, |garph, cx| {
+                garph.dirty = true;
+                cx.notify();
+            });
+        }
+        if let Some(sp) = &self.status_panel {
+            sp.update(cx, |sp, cx| {
+                sp.reload();
+                cx.notify();
+            });
+        }
+        if let Some(sb) = &self.status_bar {
+            sb.update(cx, |sb, cx| {
+                sb.refresh();
+                cx.notify();
+            });
+        }
     }
 
     fn render_file_list(&self, dock: &Entity<Garph>, cx: &mut Context<Self>) -> AnyElement {
@@ -450,6 +500,9 @@ impl Render for Workspace {
             .detach();
         cx.subscribe(&self.title_bar, Self::on_quit_clicked)
             .detach();
+        if let Some(bp) = &self.branch_panel {
+            cx.subscribe(bp, Self::on_branch_checked_out).detach();
+        }
 
         let dock = self.dock.clone().unwrap();
         let title_bar = self.title_bar.clone();
@@ -486,25 +539,32 @@ impl Render for Workspace {
                         div()
                             .w(gpui::px(300.0))
                             .h_full()
+                            .flex()
+                            .flex_col()
                             .border_r_1()
-                            .border_color(if self.active_pane == ActivePane::Dock {
-                                gpui::rgb(0x4A90D9)
-                            } else {
-                                gpui::rgb(0xE5E5E5)
+                            .border_color(gpui::rgb(0x333333))
+                            .bg(gpui::rgb(0x282828))
+                            .when_some(self.branch_panel.clone(), |el, bp| {
+                                el.child(
+                                    div()
+                                        .w_full()
+                                        .h(gpui::px(140.0))
+                                        .border_b_1()
+                                        .border_color(gpui::rgb(0x333333))
+                                        .child(bp),
+                                )
                             })
-                            .bg(if self.active_pane == ActivePane::Dock {
-                                gpui::rgb(0xF0F8FF)
-                            } else {
-                                gpui::rgb(0x282828)
+                            .when_some(self.status_panel.clone(), |el, sp| {
+                                el.child(
+                                    div()
+                                        .w_full()
+                                        .h(gpui::px(140.0))
+                                        .border_b_1()
+                                        .border_color(gpui::rgb(0x333333))
+                                        .child(sp),
+                                )
                             })
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _event, _window, cx| {
-                                    this.active_pane = ActivePane::Dock;
-                                    cx.notify();
-                                }),
-                            )
-                            .child(dock.clone()),
+                            .child(div().flex_1().child(dock.clone())),
                     )
                     .child(
                         div()
@@ -530,6 +590,7 @@ impl Render for Workspace {
                             }),
                     ),
             )
+            .when_some(self.status_bar.clone(), |el, sb| el.child(sb))
             .when(self.menu_bar.read(cx).is_dropdown_open(), |this| {
                 this.child(
                     div()
