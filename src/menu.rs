@@ -14,6 +14,12 @@ pub struct MenuBar {
     is_dropdown_open: bool,
 }
 
+impl Default for MenuBar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EventEmitter<DropdownEvent> for MenuBar {}
 
 impl MenuBar {

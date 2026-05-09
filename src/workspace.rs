@@ -441,7 +441,7 @@ impl Workspace {
 impl EventEmitter<CommitSelected> for Workspace {}
 
 impl Render for Workspace {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(dock) = &self.dock {
             cx.subscribe(dock, Self::on_commit_selected).detach();
         }

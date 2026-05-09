@@ -58,9 +58,11 @@ fn run_app() -> Result<(), Box<dyn Error>> {
 
             let app_state = build_app_state(cx, app_session);
             AppState::set_global(app_state.clone(), cx);
-
             cx.activate(true);
             workspace::init(app_state.clone(), cx);
+            call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+
+            collab_ui::init(&app_state, cx);
 
             // Open a new workspace with a blank file editor
             workspace::open_new(

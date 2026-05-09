@@ -63,6 +63,7 @@ pub struct Garph {
     edges: Vec<Edge>,
     content_height: Pixels,
     max_lane: usize,
+    dirty: bool,
 }
 
 impl Garph {
@@ -73,12 +74,14 @@ impl Garph {
             edges: Vec::new(),
             content_height: px(0.0),
             max_lane: 0,
+            dirty: true,
         }
     }
 
     pub fn update_repo(&mut self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
         let repo = git2::Repository::open(path)?;
         *self.repo.borrow_mut() = Some(repo);
+        self.dirty = true;
         Ok(())
     }
 
@@ -466,7 +469,7 @@ impl Garph {
                         path: name.to_string(),
                         status: git2::Delta::Added,
                         old_oid: None,
-                        new_oid: Some(oid.clone()),
+                        new_oid: Some(*oid),
                     });
                 }
             }
@@ -477,65 +480,25 @@ impl Garph {
             let parent_tree = parent.tree()?;
             let diff = repo.diff_tree_to_tree(Some(&parent_tree), Some(&commit_tree), None)?;
 
-            // Log before processing diff
-            eprintln!("Processing diff for commit: {}", oid);
-
-            let diff_result = diff.foreach(
+            diff.foreach(
                 &mut |delta, _| {
-                    // Log delta status
-                    eprintln!("Processing delta with status: {:?}", delta.status());
+                    let file_path = delta
+                        .new_file()
+                        .path()
+                        .or(delta.old_file().path())
+                        .and_then(|p| p.to_str())
+                        .unwrap_or("unknown")
+                        .to_string();
 
-                    // Safely extract file path with detailed logging
-                    let file_path = match delta.new_file().path().or(delta.old_file().path()) {
-                        Some(path) => match path.to_str() {
-                            Some(s) => {
-                                eprintln!("Extracted file path: {}", s);
-                                s.to_string()
-                            }
-                            None => {
-                                eprintln!(
-                                    "Warning: File path contains invalid UTF-8, using 'unknown'"
-                                );
-                                "unknown".to_string()
-                            }
-                        },
-                        None => {
-                            eprintln!("Warning: No file path available, using 'unknown'");
-                            "unknown".to_string()
-                        }
-                    };
-
-                    // Safely extract old OID
                     let old_oid = {
-                        let old_file = delta.old_file();
-                        let oid = old_file.id();
-                        if oid.is_zero() {
-                            eprintln!("Old OID is zero");
-                            None
-                        } else {
-                            eprintln!("Old OID: {}", oid);
-                            Some(oid)
-                        }
+                        let id = delta.old_file().id();
+                        if id.is_zero() { None } else { Some(id) }
                     };
 
-                    // Safely extract new OID
                     let new_oid = {
-                        let new_file = delta.new_file();
-                        let oid = new_file.id();
-                        if oid.is_zero() {
-                            eprintln!("New OID is zero");
-                            None
-                        } else {
-                            eprintln!("New OID: {}", oid);
-                            Some(oid)
-                        }
+                        let id = delta.new_file().id();
+                        if id.is_zero() { None } else { Some(id) }
                     };
-
-                    eprintln!(
-                        "Adding changed file: {} (status: {:?})",
-                        file_path,
-                        delta.status()
-                    );
 
                     changed_files.push(ChangedFile {
                         path: file_path,
@@ -548,20 +511,7 @@ impl Garph {
                 None,
                 None,
                 None,
-            );
-
-            match diff_result {
-                Ok(_) => {
-                    eprintln!(
-                        "Successfully processed diff, found {} changed files",
-                        changed_files.len()
-                    );
-                }
-                Err(e) => {
-                    eprintln!("Error processing diff: {}", e);
-                    return Err(format!("Failed to process diff: {}", e).into());
-                }
-            }
+            )?;
         }
 
         Ok(changed_files)
@@ -607,7 +557,6 @@ impl Garph {
 
         let target_path = file_path.to_string();
 
-        // Process diff with error handling
         let result = diff.foreach(
             &mut |delta, _| {
                 let current_path = match delta.new_file().path().or(delta.old_file().path()) {
@@ -693,14 +642,7 @@ impl Garph {
             }),
         );
 
-        // Handle any errors from diff.foreach()
-        match result {
-            Ok(_) => {}
-            Err(e) => {
-                eprintln!("Error processing diff for file {}: {}", file_path, e);
-                return Err(format!("Failed to compute diff for file {}: {}", file_path, e).into());
-            }
-        }
+        result.map_err(|e| format!("Failed to compute diff for file {}: {}", file_path, e))?;
 
         let result = diff_lines.into_inner();
         let found = file_found.into_inner();
@@ -865,7 +807,7 @@ impl Garph {
         let entry = tree.get_path(std::path::Path::new(file_path)).ok()?;
         let object = entry.to_object(repo).ok()?;
         let blob = object.as_blob()?;
-        Some(blob.size() as usize)
+        Some(blob.size())
     }
 }
 
@@ -875,7 +817,11 @@ impl EventEmitter<RepoPathChanged> for Garph {}
 
 impl Render for Garph {
     fn render(&mut self, _w: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.recompute();
+        if self.dirty {
+            self.recompute();
+            self.dirty = false;
+            cx.notify();
+        }
 
         let has_repo = self.repo.borrow().is_some();
         let nodes = self.nodes.clone();
@@ -1035,7 +981,7 @@ impl Render for Garph {
                                     .text_color(gpui::rgb(0x969696))
                                     .text_size(px(10.0))
                                     .line_clamp(1)
-                                    .child(format!("{}", truncated_message)),
+                                    .child(truncated_message.to_string()),
                             )
                     }))),
             )

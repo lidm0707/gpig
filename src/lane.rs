@@ -5,6 +5,12 @@ pub struct LaneManager {
     pub lanes: Vec<Option<Oid>>,
 }
 
+impl Default for LaneManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LaneManager {
     pub fn new() -> Self {
         Self { lanes: Vec::new() }

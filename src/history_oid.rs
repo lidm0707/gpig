@@ -23,6 +23,12 @@ pub struct HistoryOidManager {
     pub history_oid: HashMap<Oid, Vec<HistoryOid>>,
 }
 
+impl Default for HistoryOidManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HistoryOidManager {
     pub fn new() -> Self {
         Self {
@@ -30,10 +36,7 @@ impl HistoryOidManager {
         }
     }
     pub fn add_history(&mut self, oid: Oid, history_oid: HistoryOid) {
-        self.history_oid
-            .entry(oid)
-            .or_insert_with(Vec::new)
-            .push(history_oid);
+        self.history_oid.entry(oid).or_default().push(history_oid);
     }
     pub fn get(&self, oid: &Oid) -> Option<&[HistoryOid]> {
         self.history_oid.get(oid).map(|oids| oids.as_slice())

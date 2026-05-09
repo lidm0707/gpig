@@ -11,7 +11,7 @@ impl ColorManager {
         ColorManager {
             count_color: 0,
             map_color: HashMap::new(),
-            colors: colors,
+            colors,
         }
     }
 
