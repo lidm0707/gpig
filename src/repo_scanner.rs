@@ -26,13 +26,7 @@ pub fn scan_git_repos_from(root: &Path) -> Vec<String> {
 
 pub fn scan_git_repos() -> Vec<String> {
     let root = default_scan_root();
-    eprintln!("[repo_scanner] scan root: {:?}", root);
-    let repos = scan_git_repos_from(&root);
-    eprintln!("[repo_scanner] found {} repos", repos.len());
-    for r in &repos {
-        eprintln!("[repo_scanner]   {}", r);
-    }
-    repos
+    scan_git_repos_from(&root)
 }
 
 fn walk_for_git(dir: &Path, depth: usize, out: &mut Vec<String>) {

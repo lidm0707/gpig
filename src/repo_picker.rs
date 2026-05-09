@@ -32,12 +32,7 @@ impl RepoPicker {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            eprintln!("[repo_picker] scan thread started");
             let repos = scan_git_repos();
-            eprintln!(
-                "[repo_picker] scan thread done, sending {} repos",
-                repos.len()
-            );
             let _ = tx.send(repos);
         });
 
@@ -95,7 +90,6 @@ impl RepoPicker {
         };
         match rx.try_recv() {
             Ok(repos) => {
-                eprintln!("[repo_picker] poll got {} repos", repos.len());
                 self.repos = repos;
                 self.scanning = false;
                 self.pending_rx = None;
