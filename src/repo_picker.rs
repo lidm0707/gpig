@@ -63,7 +63,9 @@ impl RepoPicker {
                 self.pending_rx = None;
                 cx.notify();
             }
-            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                cx.notify();
+            }
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 self.scanning = false;
                 self.pending_rx = None;
