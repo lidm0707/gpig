@@ -1,13 +1,14 @@
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, Render, Styled, Window, div, px,
+    AnyElement, Context, Entity, EventEmitter, InteractiveElement, IntoElement, MouseButton,
+    ParentElement, Render, Styled, Window, div, px,
 };
 
-use crate::actions::{OpenFile, Quit};
+use crate::actions::Quit;
 use crate::branch::{BranchCheckedOut, BranchPanel};
 use crate::garph::{self, ChangedFile, CommitSelected, Garph};
 use crate::menu::{DropdownEvent, MenuBar};
+use crate::path_bar::{PathBar, RepoPathSubmitted, SearchPathCleared, SearchPathSubmitted};
 use crate::status_bar::StatusBar;
 use crate::status_panel::StatusPanel;
 use crate::title::{QuitClicked, TitleBar};
@@ -19,6 +20,7 @@ pub struct Workspace {
     dock: Option<Entity<Garph>>,
     title_bar: Entity<TitleBar>,
     menu_bar: Entity<MenuBar>,
+    path_bar: Entity<PathBar>,
     branch_panel: Option<Entity<BranchPanel>>,
     status_panel: Option<Entity<StatusPanel>>,
     status_bar: Option<Entity<StatusBar>>,
@@ -45,6 +47,7 @@ impl Workspace {
 
         let menu_bar = cx.new(|_| MenuBar::new());
         let title_bar = cx.new(|_| TitleBar::new("Dark Pig Git"));
+        let path_bar = cx.new(|_| PathBar::new());
 
         let branch_panel = dock.as_ref().map(|garph| {
             let repo = garph.read(cx).repo();
@@ -61,10 +64,22 @@ impl Workspace {
             cx.new(|_| StatusBar::new(repo))
         });
 
+        cx.subscribe(&path_bar, Self::on_repo_path_submitted)
+            .detach();
+        cx.subscribe(&path_bar, Self::on_search_path_submitted)
+            .detach();
+        cx.subscribe(&path_bar, Self::on_search_path_cleared)
+            .detach();
+
+        if let Some(ref garph) = dock {
+            cx.subscribe(garph, Self::on_repo_path_changed).detach();
+        }
+
         Self {
             dock: dock_clone,
             title_bar,
             menu_bar,
+            path_bar,
             branch_panel,
             status_panel,
             status_bar,
@@ -189,6 +204,74 @@ impl Workspace {
                 cx.notify();
             });
         }
+        self.reload_status_panels(cx);
+    }
+
+    fn on_repo_path_submitted(
+        &mut self,
+        _path_bar: Entity<PathBar>,
+        event: &RepoPathSubmitted,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(dock) = &self.dock {
+            let result = dock.update(cx, |garph, _cx| garph.update_repo(&event.path));
+            if let Err(e) = result {
+                self.path_bar.update(cx, |pb, _| {
+                    pb.set_error(Some(format!("Failed: {}", e)));
+                });
+            } else {
+                self.path_bar.update(cx, |pb, _| {
+                    pb.set_error(None);
+                });
+            }
+        }
+        cx.notify();
+    }
+
+    fn on_search_path_submitted(
+        &mut self,
+        _path_bar: Entity<PathBar>,
+        event: &SearchPathSubmitted,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(dock) = &self.dock {
+            dock.update(cx, |garph, cx| {
+                garph.set_search_path(Some(event.path.clone()));
+                cx.notify();
+            });
+        }
+        cx.notify();
+    }
+
+    fn on_search_path_cleared(
+        &mut self,
+        _path_bar: Entity<PathBar>,
+        _event: &SearchPathCleared,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(dock) = &self.dock {
+            dock.update(cx, |garph, cx| {
+                garph.set_search_path(None);
+                cx.notify();
+            });
+        }
+        cx.notify();
+    }
+
+    fn on_repo_path_changed(
+        &mut self,
+        _garph: Entity<Garph>,
+        _event: &garph::RepoPathChanged,
+        cx: &mut Context<Self>,
+    ) {
+        self.reload_status_panels(cx);
+        self.path_bar.update(cx, |pb, _| {
+            pb.clear_search();
+        });
+        cx.notify();
+    }
+
+    fn reload_status_panels(&mut self, cx: &mut Context<Self>) {
         if let Some(sp) = &self.status_panel {
             sp.update(cx, |sp, cx| {
                 sp.reload();
@@ -198,6 +281,12 @@ impl Workspace {
         if let Some(sb) = &self.status_bar {
             sb.update(cx, |sb, cx| {
                 sb.refresh();
+                cx.notify();
+            });
+        }
+        if let Some(bp) = &self.branch_panel {
+            bp.update(cx, |bp, cx| {
+                bp.reload();
                 cx.notify();
             });
         }
@@ -504,18 +593,6 @@ impl Workspace {
         self.selected_commit = commit;
         cx.notify();
     }
-
-    // pub fn add_pane(&mut self, pane: Entity<AnyElement>) {
-    //     self.pane.push(pane);
-    // }
-
-    // pub fn remove_pane(&mut self, index: usize) {
-    //     self.pane.remove(index);
-    // }
-
-    // pub fn remove_all_panes(&mut self) {
-    //     self.pane.clear();
-    // }
 }
 
 impl EventEmitter<CommitSelected> for Workspace {}
@@ -539,10 +616,7 @@ impl Render for Workspace {
         let dock = self.dock.clone().unwrap();
         let title_bar = self.title_bar.clone();
         let menu_bar = self.menu_bar.clone();
-
-        // let path_repo = window.use_state(cx, |_, cx| cx.new(|_| "".to_string()));
-        // let repo = git2::Repository::open(&path_repo.read(cx).read(cx)).unwrap();
-        // let garph = Garph::new(repo);
+        let path_bar = self.path_bar.clone();
 
         div()
             .size_full()
@@ -562,6 +636,7 @@ impl Render for Workspace {
             )
             .child(title_bar)
             .child(menu_bar)
+            .child(path_bar)
             .child(
                 div()
                     .flex_1()
@@ -643,52 +718,11 @@ impl Render for Workspace {
                         )
                         .child(
                             div()
-                                .id("menu_item_new")
-                                .text_color(gpui::white())
-                                .px(px(16.0))
-                                .py(px(8.0))
-                                .child("New")
-                                .hover(|style| style.bg(gpui::rgb(0x333333)))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|this, _event, _window, cx| {
-                                        this.menu_bar.update(cx, |menu_bar, cx| {
-                                            menu_bar.close_dropdown(cx);
-                                        });
-                                        cx.notify();
-                                        cx.stop_propagation();
-                                    }),
-                                ),
-                        )
-                        .child(
-                            div()
                                 .id("menu_item_open")
                                 .text_color(gpui::white())
                                 .px(px(16.0))
                                 .py(px(8.0))
                                 .child("Open")
-                                .hover(|style| style.bg(gpui::rgb(0x333333)))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|this, _event, window, cx| {
-                                        println!("Open menu item clicked!");
-                                        this.menu_bar.update(cx, |menu_bar, cx| {
-                                            menu_bar.close_dropdown(cx);
-                                        });
-                                        cx.stop_propagation();
-                                        // cx.dispatch_action(&OpenFile);
-                                        // cx.dispatch_action(&OpenFile);
-                                        window.dispatch_action(Box::new(OpenFile), cx);
-                                    }),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .id("menu_item_save")
-                                .text_color(gpui::white())
-                                .px(px(16.0))
-                                .py(px(8.0))
-                                .child("Save")
                                 .hover(|style| style.bg(gpui::rgb(0x333333)))
                                 .on_mouse_down(
                                     MouseButton::Left,

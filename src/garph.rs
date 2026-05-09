@@ -265,7 +265,7 @@ fn file_size(repo: &Repository, commit: &git2::Commit, file_path: &str) -> Optio
     Some(blob.size())
 }
 
-fn recompute_bg(repo_path: String) -> GraphData {
+fn recompute_bg(repo_path: String, search_path: Option<String>) -> GraphData {
     let Ok(repo) = Repository::open(&repo_path) else {
         return GraphData {
             nodes: Vec::new(),
@@ -296,15 +296,39 @@ fn recompute_bg(repo_path: String) -> GraphData {
     let mut history_oids_manager = HistoryOidManager::new();
     let mut max_lane = 0;
 
-    for (index, oid) in revwalk.take(LIMIT_ROW).enumerate() {
-        let Ok(oid) = oid else { continue };
-        let Ok(commit) = repo.find_commit(oid) else {
+    let oids: Vec<Oid> = revwalk.take(LIMIT_ROW * 5).filter_map(|o| o.ok()).collect();
+
+    for oid in &oids {
+        let Ok(commit) = repo.find_commit(*oid) else {
             continue;
         };
+
+        if let Some(ref sp) = search_path {
+            let parent = commit.parent(0).ok();
+            let old_tree = parent.as_ref().and_then(|p| p.tree().ok());
+            let new_tree = commit.tree().ok();
+
+            let mut opts = git2::DiffOptions::new();
+            opts.pathspec(sp);
+
+            let diff =
+                repo.diff_tree_to_tree(old_tree.as_ref(), new_tree.as_ref(), Some(&mut opts));
+
+            let Ok(diff) = diff else { continue };
+            if diff.deltas().len() == 0 {
+                continue;
+            }
+        }
+
+        if nodes.len() >= LIMIT_ROW {
+            break;
+        }
+
         let parents: Vec<Oid> = commit.parents().map(|p| p.id()).collect();
-        let lane = lane_manager.assign_commit(&oid, &parents);
+        let lane = lane_manager.assign_commit(oid, &parents);
         let color = color_manager.get_color(&lane);
 
+        let index = nodes.len();
         let pos = Point::new(
             (START_X + (lane as f32) * LANE_WIDTH).into(),
             (COMMIT_HEIGHT * index as f32).into(),
@@ -316,7 +340,7 @@ fn recompute_bg(repo_path: String) -> GraphData {
 
         let current_edge_point = Point::new(pos.x + SIZE / 2.0, pos.y + SIZE / 2.0);
 
-        if let Some(history_oids) = history_oids_manager.get(&oid) {
+        if let Some(history_oids) = history_oids_manager.get(oid) {
             for history in history_oids {
                 if history.edge_point.x > current_edge_point.x {
                     edge_manager.add(history.edge_point, current_edge_point, history.color);
@@ -337,7 +361,7 @@ fn recompute_bg(repo_path: String) -> GraphData {
         }
 
         nodes.push(CommitNode::new(
-            oid,
+            *oid,
             commit.message().unwrap_or_default().to_string(),
             commit.author().email().unwrap_or_default().to_string(),
             commit.time(),
@@ -391,6 +415,7 @@ impl Clone for Garph {
         Self {
             repo: self.repo.clone(),
             repo_path: self.repo_path.clone(),
+            search_path: self.search_path.clone(),
             nodes: self.nodes.clone(),
             edges: self.edges.clone(),
             content_height: self.content_height,
@@ -404,6 +429,7 @@ impl Clone for Garph {
 pub struct Garph {
     repo: Rc<RefCell<Option<Repository>>>,
     repo_path: Option<String>,
+    search_path: Option<String>,
     nodes: Vec<CommitNode>,
     edges: Vec<Edge>,
     content_height: Pixels,
@@ -417,6 +443,7 @@ impl Garph {
         Self {
             repo: Rc::new(RefCell::new(repo)),
             repo_path: None,
+            search_path: None,
             nodes: Vec::new(),
             edges: Vec::new(),
             content_height: px(0.0),
@@ -448,17 +475,24 @@ impl Garph {
         self.repo_path.as_deref()
     }
 
+    pub fn set_search_path(&mut self, path: Option<String>) {
+        self.search_path = path;
+        self.dirty = true;
+        self.spawn_recompute();
+    }
+
     fn spawn_recompute(&mut self) {
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
+        let search_path = self.search_path.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         self.pending_graph_rx = Some(rx);
         self.nodes.clear();
         self.edges.clear();
 
         std::thread::spawn(move || {
-            let data = recompute_bg(repo_path);
+            let data = recompute_bg(repo_path, search_path);
             let _ = tx.send(data);
         });
     }
@@ -1167,22 +1201,11 @@ impl Render for Garph {
                             div()
                                 .px(px(20.0))
                                 .py(px(10.0))
-                                .bg(gpui::rgb(0x4A90D9))
+                                .bg(gpui::rgb(0x333333))
                                 .rounded(px(6.0))
-                                .text_color(gpui::white())
-                                .text_size(px(14.0))
-                                .cursor_pointer()
-                                .hover(|style| style.bg(gpui::rgb(0x357ABD)))
-                                .child("Set Path File")
-                                .on_mouse_down(
-                                    gpui::MouseButton::Left,
-                                    cx.listener(move |_this, _event, window, cx| {
-                                        window.dispatch_action(
-                                            Box::new(crate::actions::OpenFile),
-                                            cx,
-                                        );
-                                    }),
-                                ),
+                                .text_color(gpui::rgb(0x888888))
+                                .text_size(px(12.0))
+                                .child("Use PathBar above to open a repo"),
                         ),
                 )
             })
