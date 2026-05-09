@@ -548,20 +548,24 @@ impl Workspace {
     }
 
     fn poll_pending_results(&mut self, cx: &mut Context<Self>) {
-        if let Some(rx) = &self.pending_files_rx
-            && let Ok(files) = rx.try_recv()
-        {
-            self.changed_files = files;
-            self.pending_files_rx = None;
-            cx.notify();
+        if let Some(rx) = &self.pending_files_rx {
+            if let Ok(files) = rx.try_recv() {
+                self.changed_files = files;
+                self.pending_files_rx = None;
+                cx.notify();
+            } else {
+                cx.notify();
+            }
         }
-        if let Some(rx) = &self.pending_diff_rx
-            && let Ok(diff) = rx.try_recv()
-        {
-            self.file_diff = Some(diff);
-            self.loading_diff = false;
-            self.pending_diff_rx = None;
-            cx.notify();
+        if let Some(rx) = &self.pending_diff_rx {
+            if let Ok(diff) = rx.try_recv() {
+                self.file_diff = Some(diff);
+                self.loading_diff = false;
+                self.pending_diff_rx = None;
+                cx.notify();
+            } else {
+                cx.notify();
+            }
         }
     }
 
