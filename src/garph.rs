@@ -168,6 +168,22 @@ pub fn compute_file_diff_bg(
     Ok(final_result.join("\n"))
 }
 
+pub fn collect_paths_bg(
+    repo_path: String,
+) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    let repo = Repository::open(&repo_path)?;
+    let index = repo.index()?;
+
+    let mut paths: Vec<String> = index
+        .iter()
+        .filter_map(|entry| std::str::from_utf8(&entry.path).ok().map(str::to_owned))
+        .collect();
+
+    paths.sort();
+
+    Ok(paths)
+}
+
 pub fn get_changed_files_bg(
     repo_path: String,
     oid: Oid,

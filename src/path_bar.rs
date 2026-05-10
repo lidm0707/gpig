@@ -1,10 +1,15 @@
 use gpui::prelude::*;
 use gpui::{
-    Context, Entity, EventEmitter, IntoElement, MouseButton, ParentElement, Styled, Window, div, px,
+    Context, Entity, EventEmitter, InteractiveElement, IntoElement, MouseButton, ParentElement,
+    SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
 
 use crate::repo_picker::{self, RepoPicker, RepoSelected};
+use crate::suggest::SuggestState;
 use crate::text_input::{TextInput, TextInputSubmitted};
+
+const SUGGEST_ITEM_H: f32 = 22.0;
+const SUGGEST_DROPDOWN_W: f32 = 300.0;
 
 #[derive(Clone, Debug)]
 pub struct RepoPathSubmitted {
@@ -23,6 +28,8 @@ pub struct PathBar {
     repo_picker: Entity<RepoPicker>,
     search_input: Entity<TextInput>,
     error_msg: Option<String>,
+    suggest: SuggestState,
+    suggest_open: bool,
 }
 
 impl EventEmitter<RepoPathSubmitted> for PathBar {}
@@ -42,6 +49,8 @@ impl PathBar {
             repo_picker,
             search_input,
             error_msg: None,
+            suggest: SuggestState::new(),
+            suggest_open: false,
         }
     }
 
@@ -49,12 +58,49 @@ impl PathBar {
         &self.repo_picker
     }
 
+    pub fn search_input(&self) -> &Entity<TextInput> {
+        &self.search_input
+    }
+
     pub fn set_error(&mut self, msg: Option<String>) {
         self.error_msg = msg;
     }
 
+    pub fn set_suggest_paths(&mut self, paths: Vec<String>) {
+        self.suggest.set_paths(paths);
+    }
+
+    pub fn suggest_open(&self) -> bool {
+        self.suggest_open
+    }
+
+    pub fn suggest_items(&self, cx: &gpui::App) -> Vec<String> {
+        let text = self.search_input.read(cx).text().trim().to_string();
+        if text.is_empty() {
+            return Vec::new();
+        }
+        self.suggest
+            .filter(&text)
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect()
+    }
+
+    pub fn select_suggestion(&mut self, path: String, cx: &mut Context<Self>) {
+        self.search_input
+            .update(cx, |input, cx| input.set_text(&path, cx));
+        self.suggest_open = false;
+        cx.emit(SearchPathSubmitted { path });
+        cx.notify();
+    }
+
+    pub fn close_suggest(&mut self) {
+        self.suggest_open = false;
+    }
+
     pub fn clear_search(&mut self, cx: &mut Context<Self>) {
         self.search_input.update(cx, |input, cx| input.clear(cx));
+        self.suggest_open = false;
     }
 
     pub fn close_repo_dropdown(&mut self, cx: &mut Context<Self>) {
@@ -85,6 +131,7 @@ impl PathBar {
             cx.emit(SearchPathCleared);
             return;
         }
+        self.suggest_open = false;
         cx.emit(SearchPathSubmitted { path });
         cx.notify();
     }
@@ -95,15 +142,87 @@ impl PathBar {
             cx.emit(SearchPathCleared);
             return;
         }
+        self.suggest_open = false;
         cx.emit(SearchPathSubmitted { path });
         cx.notify();
     }
 
     fn emit_clear(&mut self, cx: &mut Context<Self>) {
         self.search_input.update(cx, |input, cx| input.clear(cx));
+        self.suggest_open = false;
         cx.emit(SearchPathCleared);
         cx.notify();
     }
+}
+
+pub fn render_suggest_dropdown(
+    path_bar: &Entity<PathBar>,
+    cx: &mut Context<crate::workspace::Workspace>,
+) -> Option<gpui::AnyElement> {
+    let items = path_bar.read(cx).suggest_items(cx);
+    if items.is_empty() {
+        return None;
+    }
+
+    let dropdown_h = items.len() as f32 * SUGGEST_ITEM_H;
+    let pb = path_bar.clone();
+
+    Some(
+        div()
+            .id("suggest_dropdown_overlay")
+            .absolute()
+            .top(px(72.0))
+            .left(px(300.0))
+            .w(px(SUGGEST_DROPDOWN_W))
+            .max_h(px(dropdown_h + 4.0))
+            .overflow_y_scroll()
+            .bg(gpui::rgb(0x1a1a1a))
+            .border_1()
+            .border_color(gpui::rgb(0x444444))
+            .rounded(px(4.0))
+            .shadow_lg()
+            .on_mouse_down(MouseButton::Left, move |_ev, _win, _cx: &mut gpui::App| {
+                _cx.stop_propagation();
+            })
+            .children(
+                items
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, path): (usize, String)| {
+                        let path_clone = path.clone();
+                        let pb2 = pb.clone();
+                        div()
+                            .id(SharedString::from(format!("suggest_{}", i)))
+                            .px(px(8.0))
+                            .py(px(2.0))
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .cursor_pointer()
+                            .hover(|s| s.bg(gpui::rgb(0x333333)))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                move |_ev, _win, cx: &mut gpui::App| {
+                                    pb2.update(cx, |pb, cx| {
+                                        pb.select_suggestion(path_clone.clone(), cx);
+                                    });
+                                    cx.stop_propagation();
+                                },
+                            )
+                            .child(
+                                div()
+                                    .text_color(gpui::rgb(0xCCCCCC))
+                                    .text_size(px(11.0))
+                                    .font_family("monospace")
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .child(path),
+                            )
+                            .into_any()
+                    }),
+            )
+            .into_any_element(),
+    )
 }
 
 impl Render for PathBar {
@@ -115,7 +234,11 @@ impl Render for PathBar {
         let repo_picker = self.repo_picker.clone();
         let search_input = self.search_input.clone();
 
+        let suggestions = self.suggest.filter(search_text.trim());
+        self.suggest_open = !suggestions.is_empty() && !search_text.trim().is_empty();
+
         div()
+            .id("path_bar")
             .w_full()
             .h(px(36.0))
             .flex()
@@ -145,6 +268,7 @@ impl Render for PathBar {
             )
             .child(
                 div()
+                    .relative()
                     .flex_1()
                     .h(px(26.0))
                     .px(px(6.0))

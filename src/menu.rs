@@ -1,6 +1,6 @@
 use gpui::{
-    Context, EventEmitter, InteractiveElement, IntoElement, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Window, div, px,
+    Context, EventEmitter, InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
+    Styled, Window, div, px,
 };
 
 #[derive(Clone)]
@@ -58,13 +58,17 @@ impl Render for MenuBar {
                     .py(px(8.0))
                     .child("File")
                     .hover(|style| style.bg(gpui::rgb(0x2a2a2a)))
-                    .on_click(cx.listener(|this, _event, _window, cx| {
-                        this.is_dropdown_open = !this.is_dropdown_open;
-                        cx.emit(DropdownEvent {
-                            is_open: this.is_dropdown_open,
-                        });
-                        cx.notify();
-                    })),
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _event, _window, cx| {
+                            this.is_dropdown_open = !this.is_dropdown_open;
+                            cx.emit(DropdownEvent {
+                                is_open: this.is_dropdown_open,
+                            });
+                            cx.stop_propagation();
+                            cx.notify();
+                        }),
+                    ),
             )
     }
 }

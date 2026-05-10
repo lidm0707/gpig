@@ -8,7 +8,7 @@ use crate::actions::Quit;
 use crate::branch::{BranchCheckedOut, BranchPanel};
 use crate::garph::{self, ChangedFile, CommitSelected, Garph};
 use crate::menu::{DropdownEvent, MenuBar};
-use crate::path_bar::{PathBar, RepoPathSubmitted, SearchPathCleared, SearchPathSubmitted};
+use crate::path_bar::{self, PathBar, RepoPathSubmitted, SearchPathCleared, SearchPathSubmitted};
 use crate::repo_picker;
 use crate::status_bar::StatusBar;
 use crate::status_panel::StatusPanel;
@@ -34,6 +34,7 @@ pub struct Workspace {
     current_commit_oid: Option<git2::Oid>,
     pending_files_rx: Option<Receiver<Vec<ChangedFile>>>,
     pending_diff_rx: Option<Receiver<String>>,
+    pending_paths_rx: Option<Receiver<Vec<String>>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -93,6 +94,7 @@ impl Workspace {
             current_commit_oid: None,
             pending_files_rx: None,
             pending_diff_rx: None,
+            pending_paths_rx: None,
         }
     }
 
@@ -224,6 +226,7 @@ impl Workspace {
                 self.path_bar.update(cx, |pb, _| {
                     pb.set_error(None);
                 });
+                self.spawn_path_collection(&event.path);
             }
         }
         cx.notify();
@@ -261,7 +264,7 @@ impl Workspace {
 
     fn on_repo_path_changed(
         &mut self,
-        _garph: Entity<Garph>,
+        garph: Entity<Garph>,
         _event: &garph::RepoPathChanged,
         cx: &mut Context<Self>,
     ) {
@@ -269,7 +272,20 @@ impl Workspace {
         self.path_bar.update(cx, |pb, cx| {
             pb.clear_search(cx);
         });
+        if let Some(path) = garph.read(cx).repo_path().map(|s| s.to_string()) {
+            self.spawn_path_collection(&path);
+        }
         cx.notify();
+    }
+
+    fn spawn_path_collection(&mut self, repo_path: &str) {
+        let (tx, rx) = mpsc::channel();
+        self.pending_paths_rx = Some(rx);
+        let repo_path = repo_path.to_string();
+        std::thread::spawn(move || {
+            let result = garph::collect_paths_bg(repo_path).unwrap_or_default();
+            let _ = tx.send(result);
+        });
     }
 
     fn reload_status_panels(&mut self, cx: &mut Context<Self>) {
@@ -567,6 +583,17 @@ impl Workspace {
                 cx.notify();
             }
         }
+        if let Some(rx) = &self.pending_paths_rx {
+            if let Ok(paths) = rx.try_recv() {
+                self.path_bar.update(cx, |pb, _| {
+                    pb.set_suggest_paths(paths);
+                });
+                self.pending_paths_rx = None;
+                cx.notify();
+            } else {
+                cx.notify();
+            }
+        }
     }
 
     fn on_dropdown_changed(
@@ -638,6 +665,7 @@ impl Render for Workspace {
                     }
                     this.path_bar.update(cx, |pb, cx| {
                         pb.close_repo_dropdown(cx);
+                        pb.close_suggest();
                     });
                     cx.notify();
                 }),
@@ -775,5 +803,13 @@ impl Render for Workspace {
                     }
                 },
             )
+            .when(self.path_bar.read(cx).suggest_open(), |el| {
+                let pb = self.path_bar.clone();
+                if let Some(dropdown) = path_bar::render_suggest_dropdown(&pb, cx) {
+                    el.child(dropdown)
+                } else {
+                    el
+                }
+            })
     }
 }

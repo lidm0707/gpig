@@ -12,6 +12,7 @@ pub mod repo_picker;
 pub mod repo_scanner;
 pub mod status_bar;
 pub mod status_panel;
+pub mod suggest;
 pub mod text_input;
 pub mod title;
 pub mod workspace;
