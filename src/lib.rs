@@ -8,6 +8,7 @@ pub mod garph;
 pub mod history_oid;
 pub mod lane;
 pub mod menu;
+pub mod panel_loader;
 pub mod path_bar;
 pub mod repo_picker;
 pub mod repo_scanner;

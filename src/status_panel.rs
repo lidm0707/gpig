@@ -1,8 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::mpsc::Receiver;
 
-use git2::Repository;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, Context, EventEmitter, IntoElement, ParentElement, Render, SharedString,
@@ -29,14 +27,13 @@ pub enum StatusKind {
 #[derive(Clone, Debug)]
 pub struct StatusUpdated;
 
-struct StatusReloadResult {
-    entries: Vec<StatusEntry>,
+pub struct StatusReloadResult {
+    pub entries: Vec<StatusEntry>,
 }
 
 pub struct StatusPanel {
     repo_path: Option<String>,
     entries: Vec<StatusEntry>,
-    pending_reload_rx: Option<Receiver<Result<StatusReloadResult, String>>>,
     loading: bool,
 }
 
@@ -45,11 +42,10 @@ impl EventEmitter<StatusUpdated> for StatusPanel {}
 const COLOR_LOADING_TEXT: u32 = 0x888888;
 
 impl StatusPanel {
-    pub fn new(_repo: Rc<RefCell<Option<Repository>>>) -> Self {
+    pub fn new(_repo: Rc<RefCell<Option<git2::Repository>>>) -> Self {
         Self {
             repo_path: None,
             entries: Vec::new(),
-            pending_reload_rx: None,
             loading: false,
         }
     }
@@ -58,48 +54,16 @@ impl StatusPanel {
         self.repo_path = Some(path);
     }
 
-    pub fn reload(&mut self) {
-        let Some(repo_path) = self.repo_path.clone() else {
-            return;
-        };
-        self.entries.clear();
+    pub fn set_loading(&mut self, cx: &mut Context<Self>) {
         self.loading = true;
-
-        let (tx, rx) = std::sync::mpsc::channel();
-        self.pending_reload_rx = Some(rx);
-
-        std::thread::spawn(move || {
-            let result = load_status_bg(&repo_path);
-            let _ = tx.send(result);
-        });
+        self.entries.clear();
+        cx.notify();
     }
 
-    fn poll_reload(&mut self, cx: &mut Context<Self>) {
-        let Some(rx) = &self.pending_reload_rx else {
-            return;
-        };
-        match rx.try_recv() {
-            Ok(Ok(result)) => {
-                self.pending_reload_rx = None;
-                self.loading = false;
-                self.entries = result.entries;
-                cx.notify();
-            }
-            Ok(Err(msg)) => {
-                self.pending_reload_rx = None;
-                self.loading = false;
-                eprintln!("status reload failed: {}", msg);
-                cx.notify();
-            }
-            Err(std::sync::mpsc::TryRecvError::Empty) => {
-                cx.notify();
-            }
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.pending_reload_rx = None;
-                self.loading = false;
-                cx.notify();
-            }
-        }
+    pub fn apply_data(&mut self, data: &StatusReloadResult, cx: &mut Context<Self>) {
+        self.entries = data.entries.clone();
+        self.loading = false;
+        cx.notify();
     }
 
     pub fn dirty_count(&self) -> usize {
@@ -107,48 +71,8 @@ impl StatusPanel {
     }
 }
 
-fn load_status_bg(repo_path: &str) -> Result<StatusReloadResult, String> {
-    let repo = Repository::open(repo_path).map_err(|e| e.to_string())?;
-    let statuses = repo.statuses(None).map_err(|e| e.to_string())?;
-
-    let mut entries = Vec::new();
-    for entry in statuses.iter() {
-        let path = entry.path().unwrap_or("?").to_string();
-        let s = entry.status();
-
-        let (staged, kind) = if s.is_conflicted() {
-            (false, StatusKind::Conflicted)
-        } else if s.is_index_new() {
-            (true, StatusKind::New)
-        } else if s.is_index_modified() {
-            (true, StatusKind::Modified)
-        } else if s.is_index_deleted() {
-            (true, StatusKind::Deleted)
-        } else if s.is_index_renamed() {
-            (true, StatusKind::Renamed)
-        } else if s.is_wt_new() {
-            (false, StatusKind::Untracked)
-        } else if s.is_wt_modified() {
-            (false, StatusKind::Modified)
-        } else if s.is_wt_deleted() {
-            (false, StatusKind::Deleted)
-        } else {
-            continue;
-        };
-
-        entries.push(StatusEntry {
-            path,
-            staged,
-            status_kind: kind,
-        });
-    }
-
-    Ok(StatusReloadResult { entries })
-}
-
 impl Render for StatusPanel {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.poll_reload(cx);
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         self.render_panel()
     }
 }

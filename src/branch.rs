@@ -35,8 +35,8 @@ pub struct BranchCheckedOut {
     pub name: String,
 }
 
-struct BranchReloadResult {
-    branches: Vec<BranchInfo>,
+pub struct BranchReloadResult {
+    pub branches: Vec<BranchInfo>,
 }
 
 struct CheckoutResult {
@@ -48,7 +48,6 @@ pub struct BranchPanel {
     branches: Vec<BranchInfo>,
     mode: RepoMode,
     pending_checkout_rx: Option<Receiver<Result<CheckoutResult, String>>>,
-    pending_reload_rx: Option<Receiver<Result<BranchReloadResult, String>>>,
     checking_out: Option<String>,
     loading: bool,
 }
@@ -62,7 +61,6 @@ impl BranchPanel {
             branches: Vec::new(),
             mode: RepoMode::Local,
             pending_checkout_rx: None,
-            pending_reload_rx: None,
             checking_out: None,
             loading: false,
         }
@@ -70,7 +68,8 @@ impl BranchPanel {
 
     pub fn set_mode(&mut self, mode: RepoMode, cx: &mut Context<Self>) {
         self.mode = mode;
-        self.spawn_reload();
+        self.loading = true;
+        self.branches.clear();
         cx.notify();
     }
 
@@ -78,53 +77,24 @@ impl BranchPanel {
         self.repo_path = Some(path);
     }
 
-    pub fn reload(&mut self) {
-        self.spawn_reload();
-    }
-
-    fn spawn_reload(&mut self) {
-        let Some(repo_path) = self.repo_path.clone() else {
-            return;
-        };
-        let mode = self.mode.clone();
-        self.branches.clear();
+    pub fn set_loading(&mut self, cx: &mut Context<Self>) {
         self.loading = true;
-
-        let (tx, rx) = std::sync::mpsc::channel();
-        self.pending_reload_rx = Some(rx);
-
-        std::thread::spawn(move || {
-            let result = load_branches_bg(&repo_path, &mode);
-            let _ = tx.send(result);
-        });
+        self.branches.clear();
+        cx.notify();
     }
 
-    fn poll_reload(&mut self, cx: &mut Context<Self>) {
-        let Some(rx) = &self.pending_reload_rx else {
-            return;
-        };
-        match rx.try_recv() {
-            Ok(Ok(result)) => {
-                self.pending_reload_rx = None;
-                self.loading = false;
-                self.branches = result.branches;
-                cx.notify();
-            }
-            Ok(Err(msg)) => {
-                self.pending_reload_rx = None;
-                self.loading = false;
-                eprintln!("branch reload failed: {}", msg);
-                cx.notify();
-            }
-            Err(std::sync::mpsc::TryRecvError::Empty) => {
-                cx.notify();
-            }
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.pending_reload_rx = None;
-                self.loading = false;
-                cx.notify();
-            }
-        }
+    pub fn apply_data(&mut self, data: &BranchReloadResult, cx: &mut Context<Self>) {
+        self.branches = data.branches.clone();
+        self.loading = false;
+        cx.notify();
+    }
+
+    pub fn mode(&self) -> &RepoMode {
+        &self.mode
+    }
+
+    pub fn repo_path(&self) -> Option<&str> {
+        self.repo_path.as_deref()
     }
 
     pub fn checkout(&mut self, name: &str, cx: &mut Context<Self>) {
@@ -173,7 +143,6 @@ impl BranchPanel {
             Ok(Ok(result)) => {
                 self.pending_checkout_rx = None;
                 self.checking_out = None;
-                self.reload();
                 cx.emit(BranchCheckedOut {
                     name: result.local_name,
                 });
@@ -183,7 +152,6 @@ impl BranchPanel {
                 self.pending_checkout_rx = None;
                 self.checking_out = None;
                 eprintln!("checkout failed: {}", msg);
-                self.reload();
                 cx.notify();
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {
@@ -207,38 +175,6 @@ impl BranchPanel {
     pub fn branches(&self) -> &[BranchInfo] {
         &self.branches
     }
-}
-
-fn load_branches_bg(repo_path: &str, mode: &RepoMode) -> Result<BranchReloadResult, String> {
-    let repo = Repository::open(repo_path).map_err(|e| e.to_string())?;
-    let branch_type = match mode {
-        RepoMode::Local => git2::BranchType::Local,
-        RepoMode::Remote => git2::BranchType::Remote,
-    };
-
-    let head_name = repo
-        .head()
-        .ok()
-        .and_then(|r| r.shorthand().map(|s| s.to_string()));
-
-    let branches_iter = repo
-        .branches(Some(branch_type))
-        .map_err(|e| e.to_string())?;
-
-    let mut branches = Vec::new();
-    for branch in branches_iter.flatten() {
-        let (b, _) = branch;
-        let name = b.name().ok().flatten().unwrap_or("").to_string();
-        let is_remote = matches!(mode, RepoMode::Remote);
-        let is_head = !is_remote && head_name.as_ref() == Some(&name);
-        branches.push(BranchInfo {
-            name,
-            is_head,
-            is_remote,
-        });
-    }
-
-    Ok(BranchReloadResult { branches })
 }
 
 fn do_checkout_bg(repo_path: &str, name: &str) -> Result<(), String> {
@@ -267,7 +203,6 @@ fn do_checkout_remote_bg(repo_path: &str, remote_name: &str) -> Result<(), Strin
 
 impl Render for BranchPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.poll_reload(cx);
         self.poll_checkout(cx);
         self.render_panel(cx)
     }

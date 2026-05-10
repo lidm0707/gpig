@@ -499,6 +499,10 @@ impl Garph {
         self.repo_path.as_deref()
     }
 
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
     pub fn set_search_path(&mut self, path: Option<String>) {
         self.search_path = path;
         self.dirty = true;

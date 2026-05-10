@@ -9,6 +9,7 @@ use crate::branch::{BranchCheckedOut, BranchPanel};
 use crate::diff_viewer;
 use crate::garph::{self, ChangedFile, CommitSelected, Garph};
 use crate::menu::{DropdownEvent, MenuBar};
+use crate::panel_loader::{self, PanelData};
 use crate::path_bar::{
     self, PathBar, RepoPathSubmitted, SearchPathCleared, SearchPathSubmitted, ViewModeChanged,
 };
@@ -38,6 +39,7 @@ pub struct Workspace {
     pending_files_rx: Option<Receiver<Vec<ChangedFile>>>,
     pending_diff_rx: Option<Receiver<String>>,
     pending_paths_rx: Option<Receiver<Vec<String>>>,
+    pending_panel_rx: Option<Receiver<Result<PanelData, String>>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -99,6 +101,7 @@ impl Workspace {
             pending_files_rx: None,
             pending_diff_rx: None,
             pending_paths_rx: None,
+            pending_panel_rx: None,
         }
     }
 
@@ -209,7 +212,7 @@ impl Workspace {
                 cx.notify();
             });
         }
-        self.reload_status_panels(cx);
+        self.spawn_panel_reload(cx);
     }
 
     fn on_repo_path_submitted(
@@ -274,6 +277,7 @@ impl Workspace {
                 bp.set_mode(event.mode.clone(), cx);
             });
         }
+        self.spawn_panel_reload(cx);
     }
 
     fn on_repo_path_changed(
@@ -282,7 +286,7 @@ impl Workspace {
         _event: &garph::RepoPathChanged,
         cx: &mut Context<Self>,
     ) {
-        self.reload_status_panels(cx);
+        self.spawn_panel_reload(cx);
         self.path_bar.update(cx, |pb, cx| {
             pb.clear_search(cx);
         });
@@ -302,38 +306,92 @@ impl Workspace {
         });
     }
 
-    fn reload_status_panels(&mut self, cx: &mut Context<Self>) {
+    fn spawn_panel_reload(&mut self, cx: &mut Context<Self>) {
         let repo_path = self
             .dock
             .as_ref()
             .and_then(|dock| dock.read(cx).repo_path().map(|s| s.to_string()));
 
+        let Some(repo_path) = repo_path else {
+            return;
+        };
+
+        let mode = self
+            .branch_panel
+            .as_ref()
+            .map(|bp| bp.read(cx).mode().clone())
+            .unwrap_or(crate::path_bar::RepoMode::Local);
+
         if let Some(sp) = &self.status_panel {
             sp.update(cx, |sp, cx| {
-                if let Some(path) = repo_path.clone() {
-                    sp.set_repo_path(path);
-                }
-                sp.reload();
-                cx.notify();
+                sp.set_repo_path(repo_path.clone());
+                sp.set_loading(cx);
             });
         }
         if let Some(sb) = &self.status_bar {
-            sb.update(cx, |sb, cx| {
-                if let Some(path) = repo_path.clone() {
-                    sb.set_repo_path(path);
-                }
-                sb.refresh();
-                cx.notify();
+            sb.update(cx, |sb, _| {
+                sb.set_repo_path(repo_path.clone());
+                sb.set_loading();
             });
         }
         if let Some(bp) = &self.branch_panel {
             bp.update(cx, |bp, cx| {
-                if let Some(path) = repo_path.clone() {
-                    bp.set_repo_path(path);
-                }
-                bp.reload();
-                cx.notify();
+                bp.set_repo_path(repo_path.clone());
+                bp.set_loading(cx);
             });
+        }
+
+        let (tx, rx) = mpsc::channel();
+        self.pending_panel_rx = Some(rx);
+
+        std::thread::spawn(move || {
+            let result = panel_loader::load_panel_data_bg(&repo_path, &mode);
+            let _ = tx.send(result);
+        });
+    }
+
+    fn poll_panel_reload(&mut self, cx: &mut Context<Self>) {
+        let Some(rx) = &self.pending_panel_rx else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok(data)) => {
+                self.pending_panel_rx = None;
+                if let Some(bp) = &self.branch_panel {
+                    bp.update(cx, |bp, cx| {
+                        bp.apply_data(&data.branches, cx);
+                    });
+                }
+                if let Some(sp) = &self.status_panel {
+                    sp.update(cx, |sp, cx| {
+                        sp.apply_data(&data.status, cx);
+                    });
+                }
+                if let Some(sb) = &self.status_bar {
+                    let node_count = self
+                        .dock
+                        .as_ref()
+                        .map(|d| d.read(cx).node_count())
+                        .unwrap_or(0);
+                    sb.update(cx, |sb, _| {
+                        sb.apply_data(data.branch_name, data.dirty_count);
+                        sb.set_node_count(node_count);
+                    });
+                }
+                cx.notify();
+            }
+            Ok(Err(msg)) => {
+                self.pending_panel_rx = None;
+                eprintln!("panel reload failed: {}", msg);
+                cx.notify();
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                cx.notify();
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.pending_panel_rx = None;
+                cx.notify();
+            }
         }
     }
 
@@ -591,6 +649,7 @@ impl EventEmitter<CommitSelected> for Workspace {}
 impl Render for Workspace {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.poll_pending_results(cx);
+        self.poll_panel_reload(cx);
 
         if let Some(dock) = &self.dock {
             cx.subscribe(dock, Self::on_commit_selected).detach();
