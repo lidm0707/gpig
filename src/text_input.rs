@@ -467,9 +467,9 @@ impl Element for TextElement {
         let style = window.text_style();
 
         let (display_text, text_color) = if content.is_empty() {
-            (input.placeholder.clone(), hsla(0., 0., 0., 0.2))
+            (input.placeholder.clone(), hsla(0., 0., 1., 0.3))
         } else {
-            (content, style.color)
+            (content, hsla(0., 0., 1., 1.))
         };
 
         let run = TextRun {
