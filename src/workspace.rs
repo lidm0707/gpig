@@ -310,12 +310,18 @@ impl Workspace {
 
         if let Some(sp) = &self.status_panel {
             sp.update(cx, |sp, cx| {
+                if let Some(path) = repo_path.clone() {
+                    sp.set_repo_path(path);
+                }
                 sp.reload();
                 cx.notify();
             });
         }
         if let Some(sb) = &self.status_bar {
             sb.update(cx, |sb, cx| {
+                if let Some(path) = repo_path.clone() {
+                    sb.set_repo_path(path);
+                }
                 sb.refresh();
                 cx.notify();
             });

@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::mpsc::Receiver;
 
 use git2::Repository;
 use gpui::prelude::*;
@@ -28,63 +29,76 @@ pub enum StatusKind {
 #[derive(Clone, Debug)]
 pub struct StatusUpdated;
 
-pub struct StatusPanel {
-    repo: Rc<RefCell<Option<Repository>>>,
+struct StatusReloadResult {
     entries: Vec<StatusEntry>,
+}
+
+pub struct StatusPanel {
+    repo_path: Option<String>,
+    entries: Vec<StatusEntry>,
+    pending_reload_rx: Option<Receiver<Result<StatusReloadResult, String>>>,
+    loading: bool,
 }
 
 impl EventEmitter<StatusUpdated> for StatusPanel {}
 
+const COLOR_LOADING_TEXT: u32 = 0x888888;
+
 impl StatusPanel {
-    pub fn new(repo: Rc<RefCell<Option<Repository>>>) -> Self {
-        let mut panel = Self {
-            repo,
+    pub fn new(_repo: Rc<RefCell<Option<Repository>>>) -> Self {
+        Self {
+            repo_path: None,
             entries: Vec::new(),
-        };
-        panel.reload();
-        panel
+            pending_reload_rx: None,
+            loading: false,
+        }
+    }
+
+    pub fn set_repo_path(&mut self, path: String) {
+        self.repo_path = Some(path);
     }
 
     pub fn reload(&mut self) {
+        let Some(repo_path) = self.repo_path.clone() else {
+            return;
+        };
         self.entries.clear();
-        let repo = self.repo.borrow();
-        let Some(repo) = repo.as_ref() else {
+        self.loading = true;
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.pending_reload_rx = Some(rx);
+
+        std::thread::spawn(move || {
+            let result = load_status_bg(&repo_path);
+            let _ = tx.send(result);
+        });
+    }
+
+    fn poll_reload(&mut self, cx: &mut Context<Self>) {
+        let Some(rx) = &self.pending_reload_rx else {
             return;
         };
-
-        let Ok(statuses) = repo.statuses(None) else {
-            return;
-        };
-
-        for entry in statuses.iter() {
-            let path = entry.path().unwrap_or("?").to_string();
-            let s = entry.status();
-
-            let (staged, kind) = if s.is_conflicted() {
-                (false, StatusKind::Conflicted)
-            } else if s.is_index_new() {
-                (true, StatusKind::New)
-            } else if s.is_index_modified() {
-                (true, StatusKind::Modified)
-            } else if s.is_index_deleted() {
-                (true, StatusKind::Deleted)
-            } else if s.is_index_renamed() {
-                (true, StatusKind::Renamed)
-            } else if s.is_wt_new() {
-                (false, StatusKind::Untracked)
-            } else if s.is_wt_modified() {
-                (false, StatusKind::Modified)
-            } else if s.is_wt_deleted() {
-                (false, StatusKind::Deleted)
-            } else {
-                continue;
-            };
-
-            self.entries.push(StatusEntry {
-                path,
-                staged,
-                status_kind: kind,
-            });
+        match rx.try_recv() {
+            Ok(Ok(result)) => {
+                self.pending_reload_rx = None;
+                self.loading = false;
+                self.entries = result.entries;
+                cx.notify();
+            }
+            Ok(Err(msg)) => {
+                self.pending_reload_rx = None;
+                self.loading = false;
+                eprintln!("status reload failed: {}", msg);
+                cx.notify();
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                cx.notify();
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.pending_reload_rx = None;
+                self.loading = false;
+                cx.notify();
+            }
         }
     }
 
@@ -93,8 +107,48 @@ impl StatusPanel {
     }
 }
 
+fn load_status_bg(repo_path: &str) -> Result<StatusReloadResult, String> {
+    let repo = Repository::open(repo_path).map_err(|e| e.to_string())?;
+    let statuses = repo.statuses(None).map_err(|e| e.to_string())?;
+
+    let mut entries = Vec::new();
+    for entry in statuses.iter() {
+        let path = entry.path().unwrap_or("?").to_string();
+        let s = entry.status();
+
+        let (staged, kind) = if s.is_conflicted() {
+            (false, StatusKind::Conflicted)
+        } else if s.is_index_new() {
+            (true, StatusKind::New)
+        } else if s.is_index_modified() {
+            (true, StatusKind::Modified)
+        } else if s.is_index_deleted() {
+            (true, StatusKind::Deleted)
+        } else if s.is_index_renamed() {
+            (true, StatusKind::Renamed)
+        } else if s.is_wt_new() {
+            (false, StatusKind::Untracked)
+        } else if s.is_wt_modified() {
+            (false, StatusKind::Modified)
+        } else if s.is_wt_deleted() {
+            (false, StatusKind::Deleted)
+        } else {
+            continue;
+        };
+
+        entries.push(StatusEntry {
+            path,
+            staged,
+            status_kind: kind,
+        });
+    }
+
+    Ok(StatusReloadResult { entries })
+}
+
 impl Render for StatusPanel {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.poll_reload(cx);
         self.render_panel()
     }
 }
@@ -112,7 +166,7 @@ impl StatusPanel {
     }
 
     fn render_panel(&self) -> AnyElement {
-        let has_repo = self.repo.borrow().is_some();
+        let has_repo = self.repo_path.is_some();
 
         if !has_repo {
             return div()
@@ -129,6 +183,39 @@ impl StatusPanel {
                         .text_color(gpui::rgb(0x666666))
                         .text_size(px(12.0))
                         .child("No repo"),
+                )
+                .into_any();
+        }
+
+        if self.loading {
+            return div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .bg(gpui::rgb(0x1E1E1E))
+                .child(
+                    div()
+                        .w_full()
+                        .px(px(10.0))
+                        .py(px(6.0))
+                        .border_b_1()
+                        .border_color(gpui::rgb(0x333333))
+                        .bg(gpui::rgb(0x252525))
+                        .text_color(gpui::rgb(0xCCCCCC))
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_size(px(12.0))
+                        .child("Changes"),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .py(px(12.0))
+                        .text_color(gpui::rgb(COLOR_LOADING_TEXT))
+                        .text_size(px(11.0))
+                        .font_family("monospace")
+                        .child("Loading status..."),
                 )
                 .into_any();
         }
