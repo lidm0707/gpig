@@ -11,6 +11,28 @@ use crate::text_input::{TextInput, TextInputSubmitted};
 const SUGGEST_ITEM_H: f32 = 22.0;
 const SUGGEST_DROPDOWN_W: f32 = 300.0;
 
+const COLOR_BG: u32 = 0x1E1E1E;
+const COLOR_BORDER: u32 = 0x333333;
+const COLOR_INPUT_BG: u32 = 0x1A1A2E;
+const COLOR_LABEL: u32 = 0x888888;
+const COLOR_SEPARATOR: u32 = 0x444444;
+const COLOR_ERROR: u32 = 0xE74C3C;
+const COLOR_MODE_ACTIVE_BG: u32 = 0x2A3A5A;
+const COLOR_MODE_ACTIVE_TEXT: u32 = 0x4A90D9;
+const COLOR_MODE_INACTIVE_BG: u32 = 0x252525;
+const COLOR_MODE_INACTIVE_TEXT: u32 = 0x666666;
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum RepoMode {
+    Local,
+    Remote,
+}
+
+#[derive(Clone, Debug)]
+pub struct ViewModeChanged {
+    pub mode: RepoMode,
+}
+
 #[derive(Clone, Debug)]
 pub struct RepoPathSubmitted {
     pub path: String,
@@ -30,8 +52,10 @@ pub struct PathBar {
     error_msg: Option<String>,
     suggest: SuggestState,
     suggest_open: bool,
+    mode: RepoMode,
 }
 
+impl EventEmitter<ViewModeChanged> for PathBar {}
 impl EventEmitter<RepoPathSubmitted> for PathBar {}
 impl EventEmitter<SearchPathSubmitted> for PathBar {}
 impl EventEmitter<SearchPathCleared> for PathBar {}
@@ -51,6 +75,7 @@ impl PathBar {
             error_msg: None,
             suggest: SuggestState::new(),
             suggest_open: false,
+            mode: RepoMode::Local,
         }
     }
 
@@ -60,6 +85,10 @@ impl PathBar {
 
     pub fn search_input(&self) -> &Entity<TextInput> {
         &self.search_input
+    }
+
+    pub fn mode(&self) -> &RepoMode {
+        &self.mode
     }
 
     pub fn set_error(&mut self, msg: Option<String>) {
@@ -107,6 +136,15 @@ impl PathBar {
         self.repo_picker.update(cx, |picker, cx| picker.close(cx));
     }
 
+    fn set_mode(&mut self, mode: RepoMode, cx: &mut Context<Self>) {
+        if self.mode == mode {
+            return;
+        }
+        self.mode = mode.clone();
+        cx.emit(ViewModeChanged { mode });
+        cx.notify();
+    }
+
     fn on_repo_selected(
         &mut self,
         _picker: Entity<RepoPicker>,
@@ -152,6 +190,68 @@ impl PathBar {
         self.suggest_open = false;
         cx.emit(SearchPathCleared);
         cx.notify();
+    }
+
+    fn render_mode_toggle(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let local_active = self.mode == RepoMode::Local;
+        let remote_active = self.mode == RepoMode::Remote;
+
+        div()
+            .flex()
+            .flex_row()
+            .rounded(px(4.0))
+            .border_1()
+            .border_color(gpui::rgb(COLOR_SEPARATOR))
+            .overflow_hidden()
+            .child(
+                div()
+                    .id("mode_local")
+                    .px(px(6.0))
+                    .py(px(2.0))
+                    .cursor_pointer()
+                    .bg(if local_active {
+                        gpui::rgb(COLOR_MODE_ACTIVE_BG)
+                    } else {
+                        gpui::rgb(COLOR_MODE_INACTIVE_BG)
+                    })
+                    .text_color(if local_active {
+                        gpui::rgb(COLOR_MODE_ACTIVE_TEXT)
+                    } else {
+                        gpui::rgb(COLOR_MODE_INACTIVE_TEXT)
+                    })
+                    .text_size(px(9.0))
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .child("LOCAL")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _ev, _win, cx| this.set_mode(RepoMode::Local, cx)),
+                    ),
+            )
+            .child(
+                div()
+                    .id("mode_remote")
+                    .px(px(6.0))
+                    .py(px(2.0))
+                    .cursor_pointer()
+                    .bg(if remote_active {
+                        gpui::rgb(COLOR_MODE_ACTIVE_BG)
+                    } else {
+                        gpui::rgb(COLOR_MODE_INACTIVE_BG)
+                    })
+                    .text_color(if remote_active {
+                        gpui::rgb(COLOR_MODE_ACTIVE_TEXT)
+                    } else {
+                        gpui::rgb(COLOR_MODE_INACTIVE_TEXT)
+                    })
+                    .text_size(px(9.0))
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .child("REMOTE")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _ev, _win, cx| this.set_mode(RepoMode::Remote, cx)),
+                    ),
+            )
+            .into_any()
     }
 }
 
@@ -229,13 +329,15 @@ impl Render for PathBar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.repo_picker.update(cx, |p, cx| p.poll_scan(cx));
 
-        let search_text = self.search_input.read(cx).text().to_string();
         let error = self.error_msg.clone();
-        let repo_picker = self.repo_picker.clone();
-        let search_input = self.search_input.clone();
+        let mode_toggle = self.render_mode_toggle(cx);
 
+        let search_text = self.search_input.read(cx).text().to_string();
         let suggestions = self.suggest.filter(search_text.trim());
         self.suggest_open = !suggestions.is_empty() && !search_text.trim().is_empty();
+
+        let repo_picker = self.repo_picker.clone();
+        let search_input = self.search_input.clone();
 
         div()
             .id("path_bar")
@@ -247,21 +349,22 @@ impl Render for PathBar {
             .gap_2()
             .px(px(8.0))
             .py(px(3.0))
-            .bg(gpui::rgb(0x1E1E1E))
+            .bg(gpui::rgb(COLOR_BG))
             .border_b_1()
-            .border_color(gpui::rgb(0x333333))
+            .border_color(gpui::rgb(COLOR_BORDER))
             .child(
                 div()
-                    .text_color(gpui::rgb(0x888888))
+                    .text_color(gpui::rgb(COLOR_LABEL))
                     .text_size(px(10.0))
                     .font_weight(gpui::FontWeight::BOLD)
                     .child("REPO"),
             )
             .child(repo_picker::render_button(&repo_picker, cx))
-            .child(div().w(px(1.0)).h(px(20.0)).bg(gpui::rgb(0x444444)))
+            .child(mode_toggle)
+            .child(div().w(px(1.0)).h(px(20.0)).bg(gpui::rgb(COLOR_SEPARATOR)))
             .child(
                 div()
-                    .text_color(gpui::rgb(0x888888))
+                    .text_color(gpui::rgb(COLOR_LABEL))
                     .text_size(px(10.0))
                     .font_weight(gpui::FontWeight::BOLD)
                     .child("PATH"),
@@ -272,9 +375,9 @@ impl Render for PathBar {
                     .flex_1()
                     .h(px(26.0))
                     .px(px(6.0))
-                    .bg(gpui::rgb(0x1A1A2E))
+                    .bg(gpui::rgb(COLOR_INPUT_BG))
                     .border_1()
-                    .border_color(gpui::rgb(0x444444))
+                    .border_color(gpui::rgb(COLOR_SEPARATOR))
                     .rounded(px(4.0))
                     .overflow_hidden()
                     .text_size(px(11.0))
@@ -309,7 +412,7 @@ impl Render for PathBar {
                         .hover(|s| s.bg(gpui::rgb(0x7A3A3A)))
                         .cursor_pointer()
                         .rounded(px(3.0))
-                        .text_color(gpui::rgb(0xE74C3C))
+                        .text_color(gpui::rgb(COLOR_ERROR))
                         .text_size(px(10.0))
                         .child("✕")
                         .on_mouse_down(
@@ -321,7 +424,7 @@ impl Render for PathBar {
             .when_some(error, |el, msg| {
                 el.child(
                     div()
-                        .text_color(gpui::rgb(0xE74C3C))
+                        .text_color(gpui::rgb(COLOR_ERROR))
                         .text_size(px(10.0))
                         .child(msg),
                 )

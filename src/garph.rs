@@ -473,12 +473,20 @@ impl Garph {
         self.repo.clone()
     }
 
-    pub fn update_repo(&mut self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn update_repo(
+        &mut self,
+        path: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let repo = git2::Repository::open(path)?;
         *self.repo.borrow_mut() = Some(repo);
         self.repo_path = Some(path.to_string());
         self.dirty = true;
         self.spawn_recompute();
+        cx.emit(RepoPathChanged {
+            path: path.to_string(),
+        });
+        cx.notify();
         Ok(())
     }
 

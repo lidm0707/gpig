@@ -9,7 +9,9 @@ use crate::branch::{BranchCheckedOut, BranchPanel};
 use crate::diff_viewer;
 use crate::garph::{self, ChangedFile, CommitSelected, Garph};
 use crate::menu::{DropdownEvent, MenuBar};
-use crate::path_bar::{self, PathBar, RepoPathSubmitted, SearchPathCleared, SearchPathSubmitted};
+use crate::path_bar::{
+    self, PathBar, RepoPathSubmitted, SearchPathCleared, SearchPathSubmitted, ViewModeChanged,
+};
 use crate::repo_picker;
 use crate::status_bar::StatusBar;
 use crate::status_panel::StatusPanel;
@@ -73,6 +75,7 @@ impl Workspace {
             .detach();
         cx.subscribe(&path_bar, Self::on_search_path_cleared)
             .detach();
+        cx.subscribe(&path_bar, Self::on_view_mode_changed).detach();
 
         if let Some(ref garph) = dock {
             cx.subscribe(garph, Self::on_repo_path_changed).detach();
@@ -216,7 +219,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         if let Some(dock) = &self.dock {
-            let result = dock.update(cx, |garph, _cx| garph.update_repo(&event.path));
+            let result = dock.update(cx, |garph, cx| garph.update_repo(&event.path, cx));
             if let Err(e) = result {
                 self.path_bar.update(cx, |pb, _| {
                     pb.set_error(Some(format!("Failed: {}", e)));
@@ -225,7 +228,6 @@ impl Workspace {
                 self.path_bar.update(cx, |pb, _| {
                     pb.set_error(None);
                 });
-                self.spawn_path_collection(&event.path);
             }
         }
         cx.notify();
@@ -261,6 +263,19 @@ impl Workspace {
         cx.notify();
     }
 
+    fn on_view_mode_changed(
+        &mut self,
+        _path_bar: Entity<PathBar>,
+        event: &ViewModeChanged,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(bp) = &self.branch_panel {
+            bp.update(cx, |bp, cx| {
+                bp.set_mode(event.mode.clone(), cx);
+            });
+        }
+    }
+
     fn on_repo_path_changed(
         &mut self,
         garph: Entity<Garph>,
@@ -288,6 +303,11 @@ impl Workspace {
     }
 
     fn reload_status_panels(&mut self, cx: &mut Context<Self>) {
+        let repo_path = self
+            .dock
+            .as_ref()
+            .and_then(|dock| dock.read(cx).repo_path().map(|s| s.to_string()));
+
         if let Some(sp) = &self.status_panel {
             sp.update(cx, |sp, cx| {
                 sp.reload();
@@ -302,6 +322,9 @@ impl Workspace {
         }
         if let Some(bp) = &self.branch_panel {
             bp.update(cx, |bp, cx| {
+                if let Some(path) = repo_path.clone() {
+                    bp.set_repo_path(path);
+                }
                 bp.reload();
                 cx.notify();
             });
