@@ -1,11 +1,12 @@
 use gpui::prelude::*;
 use gpui::{
     AnyElement, Context, Entity, EventEmitter, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, Render, Styled, Window, div, px,
+    ParentElement, Render, SharedString, Styled, Window, div, px,
 };
 
 use crate::actions::Quit;
 use crate::branch::{BranchCheckedOut, BranchPanel};
+use crate::diff_viewer;
 use crate::garph::{self, ChangedFile, CommitSelected, Garph};
 use crate::menu::{DropdownEvent, MenuBar};
 use crate::path_bar::{self, PathBar, RepoPathSubmitted, SearchPathCleared, SearchPathSubmitted};
@@ -27,7 +28,7 @@ pub struct Workspace {
     status_bar: Option<Entity<StatusBar>>,
     selected_commit: Option<CommitSelected>,
     changed_files: Vec<ChangedFile>,
-    selected_file: Option<usize>,
+    expanded_file: Option<usize>,
     file_diff: Option<String>,
     active_pane: ActivePane,
     loading_diff: bool,
@@ -87,7 +88,7 @@ impl Workspace {
             status_bar,
             selected_commit: None,
             changed_files: Vec::new(),
-            selected_file: None,
+            expanded_file: None,
             file_diff: None,
             active_pane: ActivePane::Content,
             loading_diff: false,
@@ -122,7 +123,7 @@ impl Workspace {
         let oid = commit.oid;
 
         self.changed_files.clear();
-        self.selected_file = None;
+        self.expanded_file = None;
         self.file_diff = None;
         self.current_commit_oid = Some(oid);
         cx.notify();
@@ -143,17 +144,22 @@ impl Workspace {
         });
     }
 
-    fn on_file_selected(
-        &mut self,
-        file_index: usize,
-        garph: Entity<Garph>,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_file_toggled(&mut self, file_index: usize, garph: Entity<Garph>, cx: &mut Context<Self>) {
         if file_index >= self.changed_files.len() {
             return;
         }
 
-        self.selected_file = Some(file_index);
+        if self.expanded_file == Some(file_index) {
+            self.expanded_file = None;
+            self.file_diff = None;
+            self.loading_diff = false;
+            self.pending_diff_rx = None;
+            cx.notify();
+            return;
+        }
+
+        self.expanded_file = Some(file_index);
+        self.file_diff = None;
         self.loading_diff = true;
         cx.notify();
 
@@ -186,13 +192,6 @@ impl Workspace {
                 .unwrap_or_else(|e| format!("Failed to compute diff: {}", e));
             let _ = tx.send(result);
         });
-    }
-
-    fn on_back_to_file_list(&mut self, cx: &mut Context<Self>) {
-        self.selected_file = None;
-        self.file_diff = None;
-        self.loading_diff = false;
-        cx.notify();
     }
 
     fn on_branch_checked_out(
@@ -309,9 +308,9 @@ impl Workspace {
         }
     }
 
-    fn render_file_list(&self, dock: &Entity<Garph>, cx: &mut Context<Self>) -> AnyElement {
+    fn render_file_panel(&self, dock: &Entity<Garph>, cx: &mut Context<Self>) -> AnyElement {
         if self.changed_files.is_empty() {
-            div()
+            return div()
                 .flex()
                 .items_center()
                 .justify_center()
@@ -319,248 +318,179 @@ impl Workspace {
                 .bg(gpui::rgb(0x1E1E1E))
                 .text_color(gpui::rgb(0x888888))
                 .child("No files changed in this commit")
-                .into_any()
-        } else {
-            let dock_for_file = dock.clone();
-            div()
-                .size_full()
-                .flex()
-                .flex_col()
-                .bg(gpui::rgb(0x1E1E1E))
-                .child(
-                    div()
-                        .w_full()
-                        .px(px(12.0))
-                        .py(px(8.0))
-                        .border_b_1()
-                        .border_color(gpui::rgb(0x333333))
-                        .bg(gpui::rgb(0x252525))
-                        .text_color(gpui::white())
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_size(px(14.0))
-                        .child(format!("Changed Files ({})", self.changed_files.len())),
-                )
-                .child(
-                    div()
-                        .id("changed-files-list")
-                        .flex_1()
-                        .bg(gpui::rgb(0x1E1E1E))
-                        .flex()
-                        .flex_col()
-                        .overflow_y_scroll()
-                        .children(self.changed_files.iter().enumerate().map(|(index, file)| {
-                            let dock_for_file_clone = dock_for_file.clone();
-                            let file_path = file.path.clone();
-                            let status = file.status;
-
-                            let status_color = match status {
-                                git2::Delta::Added => gpui::rgb(0x2ECC71),
-                                git2::Delta::Deleted => gpui::rgb(0xE74C3C),
-                                git2::Delta::Modified => gpui::rgb(0xF39C12),
-                                git2::Delta::Renamed => gpui::rgb(0x3498DB),
-                                git2::Delta::Copied => gpui::rgb(0x9B59B6),
-                                _ => gpui::rgb(0x888888),
-                            };
-
-                            let status_text = match status {
-                                git2::Delta::Added => "A",
-                                git2::Delta::Deleted => "D",
-                                git2::Delta::Modified => "M",
-                                git2::Delta::Renamed => "R",
-                                git2::Delta::Copied => "C",
-                                _ => "?",
-                            };
-
-                            div()
-                                .w_full()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .px(px(12.0))
-                                .py(px(8.0))
-                                .border_b_1()
-                                .border_color(gpui::rgb(0x2A2A2A))
-                                .hover(|style| style.bg(gpui::rgb(0x2A2A2A)))
-                                .cursor_pointer()
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |this, _event, _window, cx| {
-                                        this.on_file_selected(
-                                            index,
-                                            dock_for_file_clone.clone(),
-                                            cx,
-                                        );
-                                    }),
-                                )
-                                .child(
-                                    div()
-                                        .w(px(30.0))
-                                        .text_color(status_color)
-                                        .font_weight(gpui::FontWeight::BOLD)
-                                        .text_size(px(12.0))
-                                        .child(status_text),
-                                )
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .text_color(gpui::rgb(0xCCCCCC))
-                                        .text_size(px(13.0))
-                                        .font_family("monospace")
-                                        .overflow_hidden()
-                                        .whitespace_nowrap()
-                                        .max_w(px(400.0))
-                                        .child(file_path),
-                                )
-                                .into_any()
-                        })),
-                )
-                .into_any()
+                .into_any();
         }
-    }
 
-    fn render_file_diff(&self, cx: &mut Context<Self>) -> AnyElement {
-        if self.loading_diff {
-            div()
-                .flex()
-                .items_center()
-                .justify_center()
-                .size_full()
-                .bg(gpui::rgb(0x1E1E1E))
-                .flex_col()
-                .gap_4()
-                .child(
-                    div()
-                        .text_color(gpui::rgb(0x888888))
-                        .text_size(px(14.0))
-                        .child("Loading diff..."),
-                )
-                .child(
-                    div()
-                        .text_color(gpui::rgb(0x666666))
-                        .text_size(px(12.0))
-                        .child("Computing file differences"),
-                )
-                .into_any()
-        } else if let Some(file_index) = self.selected_file {
-            // Safety check to prevent out of bounds
-            if file_index >= self.changed_files.len() {
+        let dock_for_file = dock.clone();
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(gpui::rgb(0x1E1E1E))
+            .child(
                 div()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size_full()
+                    .w_full()
+                    .px(px(12.0))
+                    .py(px(8.0))
+                    .border_b_1()
+                    .border_color(gpui::rgb(0x333333))
+                    .bg(gpui::rgb(0x252525))
+                    .text_color(gpui::white())
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_size(px(14.0))
+                    .child(format!("Changed Files ({})", self.changed_files.len())),
+            )
+            .child(
+                div()
+                    .id("changed-files-list")
+                    .flex_1()
                     .bg(gpui::rgb(0x1E1E1E))
-                    .text_color(gpui::rgb(0xE74C3C))
-                    .child("Error: Invalid file selection")
-                    .into_any()
-            } else {
-                let file = &self.changed_files[file_index];
-                let title = format!("Diff: {}", file.path);
-                let diff_content = self
-                    .file_diff
-                    .as_ref()
-                    .cloned()
-                    .unwrap_or_else(|| "No diff available".to_string());
-
-                div()
-                    .size_full()
                     .flex()
                     .flex_col()
-                    .bg(gpui::rgb(0x1E1E1E))
-                    // Header with back button
+                    .overflow_y_scroll()
+                    .children(self.changed_files.iter().enumerate().map(|(index, file)| {
+                        self.render_file_row(index, file, &dock_for_file, cx)
+                    })),
+            )
+            .into_any()
+    }
+
+    fn render_file_row(
+        &self,
+        index: usize,
+        file: &ChangedFile,
+        dock: &Entity<Garph>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let is_expanded = self.expanded_file == Some(index);
+        let dock_clone = dock.clone();
+
+        let status_color = match file.status {
+            git2::Delta::Added => gpui::rgb(0x2ECC71),
+            git2::Delta::Deleted => gpui::rgb(0xE74C3C),
+            git2::Delta::Modified => gpui::rgb(0xF39C12),
+            git2::Delta::Renamed => gpui::rgb(0x3498DB),
+            git2::Delta::Copied => gpui::rgb(0x9B59B6),
+            _ => gpui::rgb(0x888888),
+        };
+
+        let status_text = match file.status {
+            git2::Delta::Added => "A",
+            git2::Delta::Deleted => "D",
+            git2::Delta::Modified => "M",
+            git2::Delta::Renamed => "R",
+            git2::Delta::Copied => "C",
+            _ => "?",
+        };
+
+        let arrow = if is_expanded { "▼" } else { "▶" };
+
+        let row_bg = if is_expanded {
+            gpui::rgb(0x252525)
+        } else {
+            gpui::rgb(0x1E1E1E)
+        };
+
+        let mut row = div()
+            .w_full()
+            .border_b_1()
+            .border_color(gpui::rgb(0x2A2A2A))
+            .child(
+                div()
+                    .id(SharedString::from(format!("file-row-{}", index)))
+                    .w_full()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .px(px(12.0))
+                    .py(px(6.0))
+                    .bg(row_bg)
+                    .hover(|style| style.bg(gpui::rgb(0x2A2A2A)))
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _event, _window, cx| {
+                            this.on_file_toggled(index, dock_clone.clone(), cx);
+                        }),
+                    )
                     .child(
                         div()
-                            .w_full()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .justify_between()
-                            .px(px(12.0))
-                            .py(px(8.0))
-                            .border_b_1()
-                            .border_color(gpui::rgb(0x333333))
-                            .bg(gpui::rgb(0x252525))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .text_color(gpui::rgb(0x888888))
-                                            .text_size(px(16.0))
-                                            .px(px(8.0))
-                                            .py(px(4.0))
-                                            .cursor_pointer()
-                                            .hover(|style| style.bg(gpui::rgb(0x444444)))
-                                            .rounded(px(4.0))
-                                            .child("←")
-                                            .on_mouse_down(
-                                                MouseButton::Left,
-                                                cx.listener(|this, _event, _window, cx| {
-                                                    this.on_back_to_file_list(cx);
-                                                }),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_color(gpui::white())
-                                            .font_weight(gpui::FontWeight::BOLD)
-                                            .text_size(px(14.0))
-                                            .child(title),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .text_color(gpui::rgb(0x888888))
-                                    .text_size(px(16.0))
-                                    .px(px(8.0))
-                                    .py(px(4.0))
-                                    .cursor_pointer()
-                                    .hover(|style| style.bg(gpui::rgb(0x444444)))
-                                    .rounded(px(4.0))
-                                    .child("✕")
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(|this, _event, _window, cx| {
-                                            this.on_back_to_file_list(cx);
-                                        }),
-                                    ),
-                            ),
+                            .w(px(14.0))
+                            .text_color(gpui::rgb(0x888888))
+                            .text_size(px(10.0))
+                            .child(arrow),
                     )
-                    // Diff content
+                    .child(
+                        div()
+                            .w(px(24.0))
+                            .text_color(status_color)
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_size(px(12.0))
+                            .child(status_text),
+                    )
                     .child(
                         div()
                             .flex_1()
-                            .id("file_diff_content")
-                            .bg(gpui::rgb(0x1E1E1E))
-                            .flex()
-                            .flex_col()
-                            .overflow_y_scroll()
-                            .px(px(12.0))
-                            .py(px(8.0))
-                            .child(
-                                div()
-                                    .text_color(gpui::rgb(0xCCCCCC))
-                                    .text_size(px(12.0))
-                                    .font_family("monospace")
-                                    .child(diff_content),
-                            ),
-                    )
-                    .into_any()
-            }
-        } else {
-            div()
+                            .text_color(gpui::rgb(0xCCCCCC))
+                            .text_size(px(13.0))
+                            .font_family("monospace")
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .child(file.path.clone()),
+                    ),
+            );
+
+        if is_expanded {
+            row = row.child(self.render_inline_diff());
+        }
+
+        row.into_any()
+    }
+
+    fn render_inline_diff(&self) -> AnyElement {
+        if self.loading_diff {
+            return div()
+                .w_full()
                 .flex()
                 .items_center()
                 .justify_center()
-                .size_full()
+                .py(px(12.0))
                 .bg(gpui::rgb(0x1E1E1E))
                 .text_color(gpui::rgb(0x888888))
-                .child("Select a file to view diff")
-                .into_any()
+                .text_size(px(12.0))
+                .child("Loading diff...")
+                .into_any();
         }
+
+        let raw = match &self.file_diff {
+            Some(d) => d.clone(),
+            None => {
+                return div()
+                    .w_full()
+                    .py(px(8.0))
+                    .bg(gpui::rgb(0x1E1E1E))
+                    .text_color(gpui::rgb(0x666666))
+                    .text_size(px(12.0))
+                    .child("No diff available")
+                    .into_any();
+            }
+        };
+
+        if diff_viewer::is_binary_or_error(&raw) {
+            return div()
+                .w_full()
+                .px(px(12.0))
+                .py(px(8.0))
+                .bg(gpui::rgb(0x1E1E1E))
+                .text_color(gpui::rgb(0x888888))
+                .text_size(px(12.0))
+                .font_family("monospace")
+                .child(raw)
+                .into_any();
+        }
+
+        let rows = diff_viewer::parse_diff(&raw);
+        diff_viewer::render_side_by_side(&rows)
     }
 
     fn poll_pending_results(&mut self, cx: &mut Context<Self>) {
@@ -726,11 +656,7 @@ impl Render for Workspace {
                                     cx.notify();
                                 }),
                             )
-                            .child(if self.selected_file.is_some() {
-                                self.render_file_diff(cx)
-                            } else {
-                                self.render_file_list(&dock, cx)
-                            }),
+                            .child(self.render_file_panel(&dock, cx)),
                     ),
             )
             .when_some(self.status_bar.clone(), |el, sb| el.child(sb))

@@ -2,6 +2,7 @@ pub mod actions;
 pub mod branch;
 pub mod color;
 pub mod commit;
+pub mod diff_viewer;
 pub mod edge;
 pub mod garph;
 pub mod history_oid;
